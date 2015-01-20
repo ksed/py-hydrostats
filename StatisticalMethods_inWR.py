@@ -1,10 +1,8 @@
 #------------------------------------------------------------------------------------------
 # Purpose:          Python-coded statistical toolbox for methods described in the Reference
 # Reference:        Statistical Methods in Water Resources (SMIWR) by Helsel, Hirsch, 2002
-# Sharepoint:       Water Resources Engineering > Technical Resources > Misc. > Statistics > "USGS Statistical Methods in Water Resources"
-# Related codes:    ESTREND (f77) http://pubs.usgs.gov/wri/wri91-4040/
 # Code Assimilator: KSedmera
-# Last Update:      4/2013
+# Last Update:      1/2015
 #------------------------------------------------------------------------------------------
 from __future__ import print_function
 import os, sys, time, csv, fileinput, Tkinter as Tk, tkFileDialog
@@ -19,9 +17,6 @@ except ImportError as exc:
     sys.stderr.write("Error: {}. Closing in 5 sec...\n".format(exc))
     print("Note: These tools require Python 2.6.5 - 2.7.5 (e.g. 2.6.5 comes with ArcGIS 10.0),")
     print("      AND several free science-related Python libraries. See which one your missing above.")
-    print("Local/scanned exe's: \\\\GNVGISDATA\\GIS_DATA\\non_project_data\\GIS_SoftwareInfo\\Python26")
-    print("                     \\\\GNVGISDATA\\GIS_DATA\\non_project_data\\GIS_SoftwareInfo\\Python27")
-    subprocess.Popen(r'explorer /select,"\\GNVGISDATA\GIS_DATA\non_project_data\GIS_SoftwareInfo\Python26\_YoullEventuallyWant_Numpy_SciPy_Matplotlib&GDAL.txt"')
     time.sleep(5);  sys.exit()
 
 ls = os.linesep
