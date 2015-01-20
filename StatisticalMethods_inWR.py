@@ -9,28 +9,32 @@
 from __future__ import print_function
 import os, sys, time, csv, fileinput, Tkinter as Tk, tkFileDialog
 try:    # Supplemental Python libraries required by the toolbox
-    import numpy as np, pylab, scipy, scipy.stats as stats, pandas
+    import numpy as np, pylab, scipy, scipy.stats as stats, pandas, datetime
     from matplotlib.ticker import AutoMinorLocator
+    from dateutil.parser import parse as parsedate
+    from textwrap import wrap
     #import AnnoteFinder as AF
 except ImportError as exc:
     import subprocess
     sys.stderr.write("Error: {}. Closing in 5 sec...\n".format(exc))
     print("Note: These tools require Python 2.6.5 - 2.7.5 (e.g. 2.6.5 comes with ArcGIS 10.0),")
     print("      AND several free science-related Python libraries. See which one your missing above.")
+    print("Local/scanned exe's: \\\\GNVGISDATA\\GIS_DATA\\non_project_data\\GIS_SoftwareInfo\\Python26")
+    print("                     \\\\GNVGISDATA\\GIS_DATA\\non_project_data\\GIS_SoftwareInfo\\Python27")
+    subprocess.Popen(r'explorer /select,"\\GNVGISDATA\GIS_DATA\non_project_data\GIS_SoftwareInfo\Python26\_YoullEventuallyWant_Numpy_SciPy_Matplotlib&GDAL.txt"')
     time.sleep(5);  sys.exit()
 
+ls = os.linesep
+fs = os.pathsep
+
 def FuncSelectRun(funclist):
-    """ Usage: ListBoxSelectNRun(funclist)
-    Populates a Tk Listbox with an 'idlist' (list) and 'tit' (string).
-    It lets the user select an function, 'idq', to pass into whatever 'PlotMethod'
-    (method), e.g. PlotMethod(idq) you want the ListBox to run.
-    * PlotMethod must be a method that knows where to find the data and idlist
-    to be used, for example to plot points / lines in a new figure.
-    * ExtraCommand='pylab.show()', which is optional, for example, allows you to
-    follow a plotting method with a figure-closing command, when you want it to
-    only plot a single line in a figure (rather than multiple lines in a single
-    figure by using PlotMethod without this ExtraCommand). """
+    """ Usage: FuncSelectNRun(funclist)
+    Populates a Tk Listbox with this library's 'funclist' (list).
+    It lets the user select an function, 'funcq', and function argument, 'argq'
+    (method), e.g. funcq(argq) you want the ListBox to run.
+    """
     print("Use the new Tk window to select an Function to execute.\nClose all Tk windows to exit this routine.")
+    print('\nYour variable names include:\n{}'.format(', '.join(cnms)))
     master = Tk.Tk()
     master.title('Function Selector')
     F1 = Tk.Frame(master)
@@ -38,7 +42,7 @@ def FuncSelectRun(funclist):
     lab.config(text="Select an function, then press a button below.")
     lab.pack()
     s = Tk.Scrollbar(F1)
-    L = Tk.Listbox(F1, width=50)
+    L = Tk.Listbox(F1, width=75)
     s.pack(side=Tk.RIGHT, fill=Tk.Y)
     L.pack(side=Tk.LEFT, fill=Tk.Y)
     s['command'] = L.yview
@@ -48,7 +52,7 @@ def FuncSelectRun(funclist):
     L.selection_set(0); L.activate(0)
 
     F2 = Tk.Frame(master)
-    ec = Tk.Entry(F2)
+    ec = Tk.Entry(F2, width=75)
     ec.insert(0, "[SPECIFY ARGS]")
     ec.pack(side=Tk.LEFT)
     F2.pack(side=Tk.TOP)
@@ -64,8 +68,10 @@ def FuncSelectRun(funclist):
         if argq == "[SPECIFY ARGS]" or argq == "":
             print("No function argments were specified. Try again.")
         else:
-            runstr = "{0}({1})".format(funcq, argq)
+            runstr = """{0}({1})""".format(funcq, argq)
             eval(runstr)
+            print('\nYour "data" variables include:\n  {0}'.format(', '.join(cnms)))
+            if dataV.keys():    print('Your "dataV" variables include:\n  {0}'.format(', '.join(dataV.keys())))
 
     F4 = Tk.Frame(master)
     b1 = Tk.Button(F4, text="Print Docstring", command=DisplayDocstring)
@@ -75,28 +81,53 @@ def FuncSelectRun(funclist):
     F4.pack()
     Tk.mainloop()
 
-def Openfile(req = 'Please select a file:'):
-    """ Customizable file open dialogue, returns list() = [full path, root path, and filename]. """
-    try:    # Try to open a csv dataset
-        root = Tk.Tk(); root.withdraw(); fname = tkFileDialog.askopenfilename(title=req); root.destroy()
-        return [fname]+list(os.path.split(fname))
-    except:
-        print("Error:", sys.exc_info()[1]); time.sleep(5);  sys.exit()
+def SelectFile(req = 'Please select a {} file:', ft='csv'):
+    """ Customizable file-selection dialogue window, returns list() = [full path, root path, and filename]. """
+    try:    # Try to select a file
+        foptions = dict(filetypes=[(ft+' file','*.'+ft)], defaultextension='.'+ft)
+        root = Tk.Tk(); root.withdraw(); root.attributes("-topmost", True); fname = tkFileDialog.askopenfilename(title=req.format(ft), **foptions); root.destroy()
+        return [fname] + list(os.path.split(fname))
+    except: print("Error: {0}".format(sys.exc_info()[1])); time.sleep(5);  sys.exit()
 
 def Col2list(c,fil=[]):
     """ Usage: Col2list(c,fil)
-    c   => Pandas column number
-    fil => filter string, e.g. 'c > 2.5'
+    c   => column name of the data to export, in quotes, e.g. "Variable1"
+    fil => a value-filtering list, e.g. ["Variable2", "> 2.5"]
     Returns a list() of data from column c"""
-    if fil: exec 'out = data[data[cnms['+str(fil[0])+']]'+fil[1]+'][cnms[c]].values.tolist()'; return out
-    else:   return data[:][cnms[c]].values.tolist()
+    if fil: exec 'out = data[data[fil[0]]'+fil[1]+'][c].values.tolist()'; return out
+    else:   return data[:][c].values.tolist()
+
+def outfile(fnmt,lbl,ext='csv'):
+    """outfile(fnmt, lbl, ext = 'csv')
+    Generates an output filename like "fnm1" with custom suffixes "lbl" and "ext"."""
+    if "_" in fnmt:  fnmop = fnmt.split('_')[0]
+    elif "-" in fnmt:  fnmop = fnmt.split('-')[0]
+    elif len(fnmt.split('.')) < 4:  fnmop = fnmt.split('.')[0]
+    else:   fnmop = fnmt.split('.')[0][:4]
+    return os.path.join(fpath, '{0}_{1}_{2}.{3}'.format(fnmop, lbl, time.strftime('%Y%m%d-%H%M'), ext))
+
+def SaveOutputCSV(dataL, vnms, lbl):
+    """SaveOutputCSV(dataL,vnms,lbl)
+    dataL:  [list1, list2,...], a list of lists, where each data list must be
+              the same length.
+    vnms:   ['Col1Name', 'Col2name',...], a list of strings with the desired
+              header for each variable.
+    lbl:    'FileNamelabel', a string with the desired filename label."""
+    fnmo = outfile(fnm1, lbl)
+    with open(fnmo, 'ab') as fo:
+        nv, nl = len(dataL), len(dataL[0])
+        fo.write(','.join(vnms))
+        for line in range(nl):
+            fo.write(ls+','.join(str(dataL[n][line]) for n in range(nv)))
+    print('- Wrote {0} records to {1}.'.format(nl+1, fnmo.split(fs)[-1]))
 
 def UniqueIDs2List(c):
-    """ Returns a tuple of the unique IDs in column, c """
+    """UniqueIDs2List(c) Returns a tuple of the unique IDs in column, c """
     return tuple(set(data[:][cnms[c]].values.tolist()))
 
 def ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand='None'):
-    """ Usage: ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand)
+    """ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand='None')
+    Usage: ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand)
     Populates a Tk Listbox with an 'idlist' (list) and 'tit' (string).
     It lets the user select an ID, 'idq', to pass into whatever 'PlotMethod'
     (method), e.g. PlotMethod(idq) you want the ListBox to run.
@@ -114,7 +145,7 @@ def ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand='None'):
     lab.config(text="Select an ID, then press a button below.")
     lab.pack()
     s = Tk.Scrollbar(F1)
-    L = Tk.Listbox(F1, width=50)
+    L = Tk.Listbox(F1, width=75)
     s.pack(side=Tk.RIGHT, fill=Tk.Y)
     L.pack(side=Tk.LEFT, fill=Tk.Y)
     s['command'] = L.yview
@@ -147,7 +178,8 @@ def ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand='None'):
     Tk.mainloop()
 
 def LoadTB(TBn):
-    """ This function assumes the csv tables are in the same directory as this script. """
+    """LoadTB(TBn)
+    This function assumes the csv tables are in the same directory as this script. """
     if TBn == 4:    fn = os.path.normpath(sys.path[0]+'/'+'RankSumTableB4.csv')
     elif TBn == 6:  fn = os.path.normpath(sys.path[0]+'/'+'RankSumTableB6.csv')
     else:   print("Error: Unknown table."); sys.exit()
@@ -156,7 +188,8 @@ def LoadTB(TBn):
     except: print("Error:", sys.exc_info()[1]); return None
 
 def Lookupx(TBn,f1,f2,x,xt):
-    """ http://stackoverflow.com/questions/8916302/selecting-across-multiple-columns-with-python-pandas
+    """Lookupx(TBn,f1,f2,x,xt)
+        http://stackoverflow.com/questions/8916302/selecting-across-multiple-columns-with-python-pandas
         http://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.UnivariateSpline.html """
     try:
         if TBn == 4:
@@ -179,8 +212,171 @@ def Lookupx(TBn,f1,f2,x,xt):
             return px
     except: print('Error:', sys.exc_info()[1]); return None
 
+def AddDateCol(fullDateCol='Date', dtcoltype='year'):
+    """SM_AddDateCol(data, fullDateCol='Date', dtcoltype='year')
+    Appends a variable/column to "data" with a name like "Date-year", that has
+    the desired date/time-part based on the "fullDateCol" column-name and
+    "dtcoltype" date/time-part that you specify.
+    The dateutil.parser.parse() method can usually extract the following
+    date/time-parts that might be in your "fullDateCol" field:
+    - year, month, day, weekday, hour, minute, second."""
+    cnm = '-'.join([fullDateCol,dtcoltype])
+    exec "data['{0}'] = [i.{2} for i in data['{1}']]".format(cnm,fullDateCol,dtcoltype)
+    cnms.append(cnm)
+    print('\nSuccessfully added "{}" to the "data" variables.'.format(cnm))
+    return data, cnms
+
+def AddDiffCol(cnm,c1,c2,operator='-'):
+    """SM_AddDiffCol(cnm,c1,c2,operator='-')
+    Appends a column named <cnm> to the DataFrame, "data", where the "operator"
+    is used to '+', '-', '*', '/' the data in columns c1 and c2
+    (i.e. c1 <operator> c2)."""
+    exec "data[cnm] = data[:][c1] {} data[:][c2]".format(operator)
+    cnms.append(cnm)
+    print('\nSuccessfully added "{}" to the "data" variables.'.format(cnm))
+    #ft = fname.split('.'); fnout = ft[0]+'_'+cnm+'.'+ft[1]
+    #data.to_csv(fnout, cols=(cnms[c1],cnms[c2],cnm), index=False)
+    return data, cnms
+
+def AddCalculatedVar(Col2bMasked,ColAggregator='',aggregator='np.max'):
+    """AddIntegrationVar(Col2bMasked,ColAggregator='',aggregator='np.max')
+    The "aggregator" method can be any function in the Python/Numpy
+      builtins (e.g. np.max, np.min, np.sum, np.mean, np.exp, np.sqrt, np.log).
+      However, the latter three example operators should only used with
+      ColAggregator=''. Note, use "np.<operator>" for Numpy operators.
+    Adds a new variable with one of two name-patterns.
+    If ColAggregator='', then the new variable (e.g. named <Col2bMasked>_Exp)
+      will only be assiged to a new list, where the "aggregator" is only
+      applied to the individual <Col2bmasked> values. The output list will be
+      identical in length to the non-aggregated <Col2bMasked> column.
+    If ColAggregator='<AValidColName>', then the new variables will be added to
+      the "dataV" variable-dictionary. The first will have name like
+      <Col2bMasked>_<ColAggregator>, and the second will have a name like
+      <Col2bMasked>_MaxOf<ColAggregator>. This method assumes that the
+      <ColAggregator> data-column has repeated values, which will be used to
+      aggregate the associated <Col2bMasked> values. The new variable will thus
+      only contain values corresponding to the unique values in the
+      <ColAggregator> data column (e.g. the year of a set of daily/monthly
+      measurements)."""
+    # Refs:
+    # http://bconnelly.net/2013/10/summarizing-data-in-python-with-pandas/
+    if ColAggregator=='':
+        vnm = '_'.join([Col2bMasked, aggregator.split('.')[-1].title()])
+        exec "dataV['{0}'] = data['{1}'].apply({2}).values.tolist()".format(vnm, Col2bMasked, aggregator)
+    else:
+        vnm1 = '_'.join([Col2bMasked, ColAggregator])
+        vnm2 = '_'.join([Col2bMasked, aggregator.split('.')[-1].title()+'Of'+ColAggregator])
+        byColAggregator = data.groupby(ColAggregator)
+        exec "dataV['{0}'] = dict(list(byColAggregator)).keys()".format(vnm1)
+        exec "dataV['{0}'] = byColAggregator['{1}'].aggregate({2}).values.tolist()".format(vnm2, Col2bMasked, aggregator)
+    print('\nSuccessfully added the "{0}" and "{1}" variables to the "dataV" library.'.format(vnm1, vnm2))
+    return dataV
+
+def SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min):
+    """SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min)
+      datescol:   column name of values in your "data" DataFrame
+      datacol:    column name of dates in your "data" DataFrame
+      mvwindow:   number of days for centered moving average window, default=7
+      byYear:     extract yearly averages? default=True
+      aggregator: numpy aggregation function, default=np.min
+    Returns two new "dataV" variables.
+    """
+    # Refs:
+    # http://stackoverflow.com/questions/19324453/add-missing-dates-to-pandas-dataframe
+    # http://stackoverflow.com/questions/15771472/pandas-rolling-mean-by-time-interval
+
+    tempSeries = pandas.Series(data[datacol].values.tolist(), index = pandas.DatetimeIndex(data[datescol]), name=datacol)
+    idx = pandas.date_range(min(tempSeries.index), max(tempSeries.index))
+    tempSeries = tempSeries.reindex(idx, fill_value=np.NaN)
+    MASeries = pandas.rolling_mean(tempSeries, mvwindow, min_periods=mvwindow, center=True)
+    if byYear:
+        vnm1 = '_'.join([datacol, 'Year'])
+        vnm2 = '_'.join([datacol, '{0}DayYearly{1}'.format(mvwindow, aggregator.func_name[1:].title())])
+        vnm3 = '_'.join([datacol, '{0}DayYearly{1}Count'.format(mvwindow, aggregator.func_name[1:].title())])
+        df = pandas.DataFrame({vnm2: MASeries, 'Year': pandas.Series([i.year for i in MASeries.index], index=MASeries.index)})
+        byYear = df.groupby('Year')
+        dataV[vnm1] = dict(list(byYear)).keys()
+        dataV[vnm2] = byYear[vnm2].aggregate(aggregator).values.tolist()
+        if raw_input('Do you want to save detailed MovingAverage data to a csv file? (y/[n])')=='y':
+            cntnan = lambda grp: np.count_nonzero(~np.isnan(grp))
+            vnm3c = byYear[vnm2].aggregate(cntnan).values.tolist()
+            SaveOutputCSV([dataV[vnm1],dataV[vnm2],vnm3c], [vnm1,vnm2,vnm3], '{}-MovAvg'.format(datacol))
+    else:
+        vnm1 = '_'.join([datacol, 'Year'])
+        vnm2 = '_'.join([datacol, '{0}DayMvAvg'.format(mvwindow)])
+        dataV[vnm1] = [i for i in MASeries.index]
+        dataV[vnm2] = MASeries.values.tolist()
+    print('\nSuccessfully added the "{0}" and "{1}" variables to the "dataV" library\nNote: there may be NaN values in the "{1}" variable.'.format(vnm1, vnm2))
+    return dataV
+
+def SM_SampleCIs(col, citype="mean", conf=0.95):
+    """SM_SampleCIs(col, citype="mean", conf=0.95); H&H 3.3 & 3.4
+        returns either the mean or median
+        with upper and lower confidence intervals.
+        col:   a list/tuple of data, e.g. from Col2list
+        citype: "mean" or "median"
+        conf:   confidence level desired"""
+    a = 1.0*np.array(col)
+    n = len(a)
+    if citype == 'mean':
+        """http://stackoverflow.com/questions/15033511/compute-a-confidence-interval-from-sample-data"""
+        m, se = np.mean(a), stats.sem(a)
+        h = se * stats.t._ppf((1+conf)/2., n-1)
+        out = n, m-h, m, m+h
+    else:   # returns median and non-parametric confidence intervals
+        """http://docs.scipy.org/doc/scipy-0.14.0/reference/generated/scipy.stats.binom.html"""
+        citype = 'median'
+        z = int(stats.binom.ppf((1.-conf)/2., n, 0.5))
+        rl, ru = z-1, n-z-1
+        out = n, sorted(a)[rl], np.median(a), sorted(a)[ru]
+    citypep = {'mean':'Mean', 'median':'Median'}
+    print('')
+    for line in [('Sample-n', 'Lower {}% CI'.format(int(conf*100)), citypep[citype], 'Upper {}% CI'.format(int(conf*100))), out]:
+        print('{0: ^12}{1: ^16}{2: ^16}{3: ^16}'.format(*line))
+
+def SM_SamplePIs(col, pitype='p', conf=0.95, sides=2):
+    """SM_SamplePIs(col, sides=2, pitype='np', conf=0.95); H&H 3.5, 3.6
+        always returns (lower-pi, upper-pi) prediction intervals
+        even if sides = 1. This lets you decide whether you want
+        X > alpha or X < alpha, where alpha = 1 - conf.
+        sides:  2 = both sides of pdf
+        pitype: 'np' or 'p' for non-parametric or gaussian
+        conf:    confidence level desired"""
+    n = len(col)
+    alpha = (1. - conf)/sides
+    pitypep = {'p':'Parametric', 'np':'Nonparametric'}
+    if pitype == 'np':
+        from scipy.interpolate import interp1d
+        y_interp = interp1d([float(i) for i in range(n)], sorted(col))
+        zl, zu = alpha*n, (1. - alpha)*(n-1)
+        out = pitypep[pitype], n, float(y_interp(zl)), float(y_interp(zu))
+    else:   # pitype == 'p'
+        stdev2 = np.std(col)**2
+        h = stats.t.ppf(1. - alpha, n-1)*np.sqrt(stdev2+stdev2/n)
+        out = pitypep[pitype], n, np.mean(col)-h, np.mean(col)+h
+    print('')
+    for line in [('PI type', 'Sample-n', 'Lower {}% PI'.format(int(conf*100)), 'Upper {}% PI'.format(int(conf*100))), out]:
+        print('{0: ^16}{1: ^12}{2: ^16}{3: ^16}'.format(*line))
+
+def SM_PercentileCIs(col, percentile, conf=0.95, sides=2):
+    """SM_SampleCIs(col, citype="mean", conf=0.95); H&H 3.3 & 3.4
+        returns either the mean or median
+        with upper and lower confidence intervals.
+        col:   a list/tuple of data, e.g. from Col2list
+        citype: "mean" or "median"
+        conf:   confidence level desired"""
+    n = len(col)
+    rl, ru = int(stats.binom.ppf((1.-conf)/sides, n, percentile)), int(stats.binom.ppf((1.+conf)/sides, n, percentile))-1
+    from scipy.interpolate import interp1d
+    y_interp = interp1d([float(i) for i in range(n)], sorted(col))
+    out = n, '{0}% = {1}'.format(percentile*100., y_interp(percentile*(n+1)-1)), sorted(col)[rl], sorted(col)[ru]
+    print('')
+    for line in [('Sample-n', 'Percentile', 'Lower {}% CI'.format(int(conf*100)), 'Upper {}% CI'.format(int(conf*100))), out]:
+        print('{0: ^12}{1: ^16}{2: ^16}{3: ^16}'.format(*line))
+
 def SM_Bootstrap(indata,a):
-    """ Tutorial:   http://www.randalolson.com/2012/08/06/statistical-analysis-made-easy-in-python/
+    """SM_Bootstrap(indata,a), where a=alpha
+        Tutorial:   http://www.randalolson.com/2012/08/06/statistical-analysis-made-easy-in-python/
         pyLibrary:  https://github.com/cgevans/scikits-bootstrap
         Data:       https://github.com/rhiever/ipython-notebook-workshop/blob/master/parasite_data.csv """
     try:    import scipy, scikits.bootstrap as bootstrap
@@ -188,23 +384,22 @@ def SM_Bootstrap(indata,a):
     CIs = bootstrap.ci(data=indata, statfunction=scipy.median, alpha=a)
     print("Bootstrapped "+str(100*(1-a))+"% confidence intervals\nLow:", CIs[0], "\tHigh:", CIs[1])
 
-def SM_AddDiffCol(cnm,c1,c2):
-    """ Adds a <cnm> column to the data DataFrame by subracting column c1 from c2"""
-    data[cnm] = pandas.Series(data[:][cnms[c2]]-data[:][cnms[c1]], index=data.index)
-    ft = fname.split('.'); fnout = ft[0]+'_'+cnm+'.'+ft[1]
-    data.to_csv(fnout, cols=(cnms[c2],cnms[c1],cnm), index=False)
-
 def SM_QSC(col):
-    """ Pandas dataframe.describe() includes [-4]lower% [-3]50% [-2]upper% percentiles. Dif(upper,lower)/Dif(total) is a measure of skewness. """
+    """SM_QSC(col)
+    Pandas dataframe.describe() includes [-4]lower% [-3]50% [-2]upper%
+    percentiles. Dif(upper,lower)/Dif(total) is a measure of quartile skew
+    coefficient qs (Kenney and Keeping,1954). """
     try:    p=[dstats[:][col][i] for i in [-4,-3,-2]]; return ((p[2]-p[1])-(p[1]-p[0]))/(p[2]-p[0])
     except: print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
 
 def SM_CorrCoeffs(c1,c2):
-    """Prints the correlation coefficients between two lists of measurements, c1 and c2 """
+    """SM_CorrCoeffs(c1,c2)
+    Prints the correlation coefficients between two lists of measurements, c1 and c2 """
     return [stats.pearsonr(c1,c2)[0], stats.spearmanr(c1,c2)[0], stats.kendalltau(c1,c2)[0]]
 
 def SM_RankSum(c1,c2,c1l,c2l,cont=False):
-    """ Cont = False -
+    """SM_RankSum(c1,c2,c1l,c2l,cont=False)
+        Cont = False -
             Compute the Wilcoxon rank-sum statistic for two samples. The Wilcoxon rank-sum
             test tests the null hypothesis that two sets of measurements are drawn from the
             same distribution. The alternative hypothesis is that values in one sample are
@@ -254,7 +449,8 @@ def SM_RankSum(c1,c2,c1l,c2l,cont=False):
     except: print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
 
 def SM_SignedRank(c1,c2):
-    """ Exact form of the Wilcoxon signed-ranks test (Chpt 6, SMIWR) """
+    """SM_SignedRank(c1,c2)
+    Exact form of the Wilcoxon signed-ranks test (Chpt 6, SMIWR) """
     LoadTB(6)
     if len(c1) > len(c2):  cn = c2; cm = c1
     else:   cn = c1; cm = c2
@@ -273,7 +469,8 @@ def SM_SignedRank(c1,c2):
     return Ws, alpha
 
 def SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show()'):
-    """ SLR returns list of slope, intercept, r_value, p_value, std_err. """
+    """SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show()')
+    Returns list of slope, intercept, r_value, p_value, std_err. """
     if lstats==None:   lstats = stats.linregress(x,y)
     fitl = np.poly1d(lstats[0:2])
     print('%s = %f * %s + %f, R^2 = %f, p = %f' % tuple([yl,lstats[0],xl]+list(lstats[1:4])))
@@ -288,7 +485,8 @@ def SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show()'):
     eval(plot)
 
 def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
-    """ http://astropython.blogspot.com/2011/12/calculating-and-plotting-prediction.html
+    """SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None)
+    http://astropython.blogspot.com/2011/12/calculating-and-plotting-prediction.html
     Calculates the confidence band of the linear regression model at the
     desired confidence level. The 2sigma confidence interval is 95% sure to
     contain the best-fit regression line. This is not the same as saying it will
@@ -309,7 +507,8 @@ def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
         2. http://www.weibull.com/DOEWeb/confidence_intervals_in_simple_linear_regression.htm
     Rodrigo Nemmen v1 Dec. 2011 v2 Jun. 2012: corrected bug in computing dy """
     def scatterfit(x, y, a=None, b=None):
-        """ Compute the mean deviation of the data about the linear model given A,B
+        """scatterfit(x, y, a=None, b=None)
+        Compute the mean deviation of the data about the linear model given A,B
         (y=ax+b) provided as arguments.
         Otherwise, compute the mean deviation about the best-fit line.
         x,y assumed to be Numpy arrays.
@@ -343,7 +542,8 @@ def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
     #return lcb, ucb, x, y
 
 def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
-    """Adapted from: https://github.com/CamDavidsonPilon/Python-Numerics/blob/master/Estimators/theil_sen.py
+    """SM_TheilLine(x,y, sample= "auto", n_samples = 1e7)
+    Adapted from: https://github.com/CamDavidsonPilon/Python-Numerics/blob/master/Estimators/theil_sen.py
     Computes the Theil-Sen estimator for 2d data.
     PARAMETERS:
     x: 1-d np array, the control variate
@@ -393,76 +593,75 @@ def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
     tls = stats.pearsonr(slope_*x+intercept_, y)
     return [slope_, intercept_]+list(tls)
 
-def SM_QuantilePlot(cols, same=False, idf=-1):
-    """ Based on: http://stackoverflow.com/questions/13865596/quantile-quantile-plot-using-scipy
-                  http://docs.scipy.org/doc/scipy/reference/stats.html """
+def SM_QuantilePlot(cols=[], cnames=[], same=False):
+    """SM_QuantilePlot(cols=[], cnames=[], same=False) creates a quantile plot(s)
+    cols =    list of data lists,
+    cnames =  column names for cols,
+    same =    True for same figure, False for seperate figures.
+    Based on: http://stackoverflow.com/questions/13865596/quantile-quantile-plot-using-scipy
+              http://docs.scipy.org/doc/scipy/reference/stats.html """
     #data = np.random.normal(loc = 20, scale = 5, size=100)
     dn1 = raw_input("Which distribution: 0=norm, 1=lognorm, 2=expon, 3=powerlaw, 4=gumbel_r, 5=gumbel_l:")
     dst = ['norm','lognorm','expon','powerlaw','gumbel_r','gumbel_l']
     if not dn1:  dn2 = dst[0]   # default(none) = norm
     else:   dn2= dst[int(dn1)]  # otherwise = translate selection
-    def QuantPlotID(idq):    # Plot method for a selected ID in the idf field.
-        if idf>-1 and not isinstance(Col2list(cols[0],fil=[idf,"=='"+idq+"'"])[0],float):  pass
-        elif idf<0 and not isinstance(Col2list(i)[0],float):  pass
+    def QuantPlotID():    # Plot method for a selected ID in the idf field.
+        if isinstance(cols[0], list) and not isinstance(cols[0][0],float):  pass
+        elif not isinstance(cols[0], list) and not isinstance(cols[0],float):  pass
         elif dn2 == 'lognorm':    # For lognormal, ignore values <= 0
-            if idf>-1:  ds = scipy.log([j for j in Col2list(cols[0],fil=[idf,"=='"+idq+"'"]) if idq>0.]); dn3='norm'
-            else:   ds = scipy.log(Col2list(i,[i,'>0'])); dn3='norm'
-        elif idf>-1:   ds = Col2list(cols[0],fil=[idf,"=='"+idq+"'"]); dn3=dn2
-        else:   ds = Col2list(i); dn3=dn2
+            if isinstance(cols[0], list):   ds = [scipy.log(i) for i in cols]; dn3='norm'
+            else:   ds = scipy.log(cols); dn3='norm'
+        else:   ds = cols; dn3=dn2
         try:
             fig = pylab.figure(); fig.patch.set_facecolor('white')
-            fig.canvas.set_window_title('Probability Plot for '+idq+";  "+str(len(ds))+' points  (Close to continue...)')
+            fig.canvas.set_window_title('Probability Plot for '+', '.join(cnames))
             osmr, ps, = stats.probplot(ds, dist=dn3, plot=pylab); ax = pylab.gca()
             pylab.xlabel(dn2+" Quantiles"); pylab.ylabel("Sorted, "+dn2+" Measurements")
             ax.xaxis.set_minor_locator(AutoMinorLocator())
             ax.yaxis.set_minor_locator(AutoMinorLocator())
             pylab.grid(b=True, which='major', color='k', linestyle=':')
             pylab.grid(b=True, which='minor', color='g', linestyle=':')
-            if idf < 0: return ps
         except:
             print("Error: the", dn2,"distribution does not fit the data.", sys.exc_info()[1]); time.sleep(5);  return None
 
     if same:    # If 2 columns were specified for the same QQ plot.
         try:
+            p = []
             fig = pylab.figure(); fig.patch.set_facecolor('white')
             fig.canvas.set_window_title('Probability Plots for '+', '.join([cnms[i] for i in cols])+'; (Close to continue...)')
-            if dn2 == 'lognorm':    ds = scipy.log(Col2list(cols[0],[cols[0],'>0'])); dn3='norm'
-            else:   ds = data[:][cnms[cols[0]]]; dn3=dn2
-            p1,p2, = stats.probplot(ds, dist=dn3, plot=pylab)
-            if dn2 == 'lognorm':    ds = scipy.log(Col2list(cols[1],[cols[1],'>0'])); dn3='norm'
-            else:   ds = data[:][cnms[cols[1]]]; dn3=dn2
-            p3,p4, = stats.probplot(ds, dist=dn3, plot=pylab)
+            for i in range(len(cols)):
+                if dn2 == 'lognorm':
+                    ds = scipy.log([val for val in cols[i] if val > 0.]); dn3='norm'
+                else:   ds = cols[i]; dn3=dn2
+                ps[i] = stats.probplot(ds, dist=dn3, plot=pylab)
             ax = pylab.gca()
             pylab.xlabel(dn2+" Quantiles"); pylab.ylabel("Sorted, "+dn2+" Measurements")
             ax.xaxis.set_minor_locator(AutoMinorLocator())
             ax.yaxis.set_minor_locator(AutoMinorLocator())
             pylab.grid(b=True, which='major', color='k', linestyle=':')
             pylab.grid(b=True, which='minor', color='g', linestyle=':')
-            pylab.legend([cnms[cols[0]],' ',cnms[cols[1]],' '], loc='best')
-            print('PPCC_norms:\n', cnms[cols[0]]+',\t'+cnms[cols[1]]+'\n', str(round(p2[-1],4))+',\t'+str(round(p4[-1],4)))
+            pylab.legend(list(' '.join(cnames))+[' '], loc='best')
+            print('PPCC_norms:\n', ',\t'.join(cnames)+'\n', ',\t'.join([str(round(val[-1][-1],4)) for val in ps]))
         except:
             print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
         pylab.show()
-    elif idf < 0:       # Plot seperate QQ plots for all columns in cols.
+    else:       # Plot seperate QQ plots for all columns in cols.
         rs = []
-        for i in cols:
-            ps = QuantPlotID(cnms[i])
+        for i,cols in enumerate(cols):
+            ps = QuantPlotID(cnames[i])
             rs.append(round(ps[-1],4))
-        print('R_norms:\n'+',\t'.join([cnms[k] for k in cols])+'\n'+',\t'.join([str(k) for k in rs]))
+        print('R_norms:\n'+',\t'.join(cnames)+'\n'+',\t'.join([str(k) for k in rs]))
         pylab.show()
 
-    else:               # Calls ListBox selector plot IDs in the idf field.
-        idlist = sorted(UniqueIDs2List(idf))
-        ListBoxSelectNRun(idlist, QuantPlotID, 'QuantilePlot', ExtraCommand='pylab.show()')
-
 def SM_PlotQQ(c1,c2,c1l,c2l):
+    """ SM_PlotQQ(c1,c2,c1l,c2l) plots data columns, c1 vs. c2 after ordering
+    the values like quantiles. """
     def linearfit(x,y):
         def linear_errors(m,x,y):
             return m*x - y
         from scipy.optimize import leastsq
         m = leastsq( linear_errors, y[-1]/x[-1], args=(x,y) )
         return m[0]
-    """ Plots data columns, c1 vs. c2 after ordering the values like quantiles. """
     fig = pylab.figure(); fig.patch.set_facecolor('white')
     fig.canvas.set_window_title(c1l+' vs. '+c2l+' (close this window to continue)')
     sc1 = sorted(c1); sc2 = sorted(c2); a=[]
@@ -477,11 +676,13 @@ def SM_PlotQQ(c1,c2,c1l,c2l):
     pylab.show()
 
 def SM_BoxPlot(cols,xlbls,ylbl,ttl, idf=-1):
-    """" http://matplotlib.org/examples/pylab_examples/boxplot_demo2.html """
+    """" SM_BoxPlot(cols,xlbls,ylbls,ttl,idf=-1) plots a box plot of cols with
+    an optional idf query of the ID field.
+    http://matplotlib.org/examples/pylab_examples/boxplot_demo2.html """
     def BoxPlotID(idq):    # Plot method for a selected ID in the idf field.
         ds = Col2list(cols[0],fil=[idf,"=='"+idq+"'"])
         fig = pylab.figure(); fig.patch.set_facecolor('white')
-        fig.canvas.set_window_title(idq+' '+ttl+";  "+str(len(ds))+' points (close this window to continue)')
+        fig.canvas.set_window_title(idq+' '+ttl)
         pylab.boxplot(ds)
         pylab.grid(b=True, which='major', color='k', linestyle=':')
         pylab.grid(b=True, which='minor', color='g', linestyle=':')
@@ -489,7 +690,7 @@ def SM_BoxPlot(cols,xlbls,ylbl,ttl, idf=-1):
 
     if idf < 0:         # Plot method for the list of 'cols' in the csv file.
         fig = pylab.figure(); fig.patch.set_facecolor('white')
-        fig.canvas.set_window_title(ttl+' (close this window to continue)')
+        fig.canvas.set_window_title(ttl)
         pylab.boxplot(cols)
         ax = pylab.gca(); #ax.yaxis.set_minor_locator(AutoMinorLocator())
         pylab.grid(b=True, which='major', color='k', linestyle=':')
@@ -591,30 +792,52 @@ def SM_1WayAnova(*args):
     Doc: http://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.f_oneway.html """
     return stats.f_oneway(*args)
 
-def SM_ExceedancePlot(data, vnm = 'x'):
-    """ SM_ExceedancePlot(data) sorts data (list), plots the exceedance curve
-    and saves and returns sdata (list) and exceed (list)."""
-    temp = {}
-    ld = float(len(data))
-    for i,val in enumerate(sorted(data)):
-        temp[val] = 1. - i/ld
-    [sdata, exceed] = zip(*sorted(temp.items(), reverse=True))
-    sdata = list(sdata)
-    exceed = list(exceed)
-    fnout = str(fname).replace('.', '_{0}-exceedance.'.format(vnm))
-    np.savetxt(fnout, np.column_stack([exceed,sdata]), fmt='%.11f', delimiter=',')
-    for i, line in enumerate(fileinput.input(fnout, inplace = 1)):
-        if i == 0:  sys.stdout.write(','.join(['Exceedance', vnm])+'\n')
-        sys.stdout.write(line)
-    print('Wrote:', fnout+'. Closing.')
+def SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x'):
+    """ SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x')
+    Ref: H&H 2.1.3 "Quantile Plots"
+
+    http://python-scipy.sourcearchive.com/documentation/0.7.0-2/namespacescipy_1_1stats_1_1mstats__basic_ac1facaf57c97ee82d89cb9bd5e380b83.html
+    stats.mstats_basic.plotting_positions(data, alpha = 0.4, beta = 0.4)
+        Plotting positions are defined as (i-alpha)/(n-alpha-beta), where:
+            - i is the rank order statistics
+            - n is the number of unmasked values along the given axis
+            - alpha and beta are two parameters.
+
+        Typical values for alpha and beta are:
+            - (0,1)    : *p(k) = k/n* : linear interpolation of cdf (R, type 4)
+            - (.5,.5)  : *p(k) = (k-1/2.)/n* : piecewise linear function (R, type 5)
+            - (0,0)    : *p(k) = k/(n+1)* : Weibull (R type 6)
+            - (1,1)    : *p(k) = (k-1)/(n-1)*. In this case, p(k) = mode[F(x[k])].
+              That's R default (R type 7)
+            - (1/3,1/3): *p(k) = (k-1/3)/(n+1/3)*. Then p(k) ~ median[F(x[k])].
+              The resulting quantile estimates are approximately median-unbiased
+              regardless of the distribution of x. (R type 8)
+            - (3/8,3/8): *p(k) = (k-3/8)/(n+1/4)*. Blom.
+              The resulting quantile estimates are approximately unbiased
+              if x is normally distributed (R type 9)
+            - (.4,.4)  : approximately quantile unbiased (Cunnane)
+            - (.35,.35): APL, used with PWM
+    """
+    sdata = sorted(col)
+    alphabeta = {'Cunnane':  {'alpha':0.4, 'beta':0.4},
+                 'R type 4': {'alpha':0., 'beta':1},
+                 'R type 5': {'alpha':0.5, 'beta':0.5},
+                 'Weibull':  {'alpha':0, 'beta':0},
+                 'R type 7': {'alpha':1, 'beta':1},
+                 'R type 8': {'alpha':1/3., 'beta':1/3.},
+                 'R type 9': {'alpha':3/8., 'beta':3/8.},
+                 'APL':      {'alpha':0.35, 'beta':0.35}}
+    exceed = [i*100. for i in stats.mstats_basic.plotting_positions(sdata, **alphabeta[exceedtype])]
+    if raw_input('Do you want to write the exceedance data to file? (y/n)')=='y':
+        SaveOutputCSV([sdata,exceed],[vnm,'P_exceedance'],'{}-exceedance'.format(vnm))
     fig = pylab.figure(); fig.patch.set_facecolor('white')
     fig.canvas.set_window_title('Exceedance Plot for {0}; (Close to continue...)'.format(vnm))
-    pylab.plot(exceed,sdata); ax = pylab.gca()
+    pylab.plot(sdata, exceed); ax = pylab.gca()
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
-    pylab.xlabel('Exceedance Frequency (%)'); pylab.ylabel(vnm)
+    pylab.ylabel('Exceedance Frequency (%)'); pylab.xlabel(vnm)
     pylab.show()
     return sdata, exceed
 
@@ -647,17 +870,34 @@ def SM_RalphPlot(dates, flows, flowmax, vnm='x'):
     pylab.show()
 
 if __name__ == '__main__':
-    print('Methods: "'+'", "'.join([v for v in globals().keys() if v.startswith('SM_')])+'"\n')
-    fname, fpath, fnm1 = Openfile('Please select a csv/txt file with your columns of measurements:')
-    try:    data = pandas.read_csv(fname, na_values=[""," "])
+    SMmethods = sorted([v for v in globals().keys() if (v.startswith(('SM','Add')))])
+    print('Available methods include:\n {}.'.format(', '.join(SMmethods)))
+    fname, fpath, fnm1 = SelectFile('Please select a csv/txt file with your columns of measurements:')
+    os.chdir(fpath)
+    try:    data = pandas.read_csv(fname, na_values=[""," ",'None'])
     except: print("Error:", sys.exc_info()[1]); time.sleep(5);  sys.exit()
+    cnms = sorted(data.columns.tolist())
+    print('\nYour original variable names include:\n{}'.format(', '.join(cnms)))
+    if raw_input("Do you want to remove the null values first? (y/n)")=='y':
+        data = data.dropna(axis=0)
+        print('\nYou chose to drop null values.\n')
+    dtcols = raw_input('If there are any dates/times columns in this file,\nplease enter which ones:\n(e.g. Enter "1,2" for the columns 1 and 2.)')
+    if dtcols:
+        for col in (int(i)-1 for i in dtcols.split(',')):
+            data[cnms[col]] = data[cnms[col]].apply(parsedate)
     # Describe the data
-    if raw_input("Do you want to remove the null values first? (y/n)")=='y':    data.dropna()
-    dstats = data.describe(); cnms = data.columns.tolist()
-    print(fnm1, ":\n", dstats, '\n', 'QSC:',''.join(['%15s' % round(SM_QSC(col),6) for col in cnms if not isinstance(data[col][0],str)])+'\n')
+    dstats = data.describe()
+    print(fnm1+" descriptions:\n", dstats, '\n', 'QSC:',''.join(['%12s' % round(SM_QSC(col),6) for col in cnms if not isinstance(data[col][0],(str,datetime.date))])+'\n')
+    dataV = {}
     # Select tool(s) and input to perform analysis
-    FuncSelectRun([v for v in globals().keys() if v.startswith('SM_')])
+    FuncSelectRun(SMmethods)
 
+    #print('\nExpected values for S2321500:')
+    #for line in [('Stat', 'Mean', 'Median'),('-'*12, '-'*16, '-'*16)]+zip(('ExpValue', 'lower95%CI', 'upper95%CI'), SM_SampleCIs(Col2list('S2321500')), SM_SampleCIs(Col2list('S2321500'), citype='median')):
+    #    print('{0: ^12}{1: ^16}{2: ^16}'.format(*line))
+    #print('\nPrediction intervals for S2321500:')
+    #for line in [('Stat', 'Parametric', 'Non-parametric'),('-'*16, '-'*16, '-'*16)]+zip(('lower95%PI', 'upper95%PI'), SM_SamplePIs(Col2list('S2321500')), SM_SamplePIs(Col2list('S2321500'), pitype='np')):
+    #    print('{0: ^16}{1: ^16}{2: ^16}'.format(*line))
     #SM_Bootstrap()
     #SM_QuantilePlot([1,2])
     #SM_AddDiffCol('FW-WS',0,2)
