@@ -1,6 +1,7 @@
 #------------------------------------------------------------------------------------------
 # Purpose:          Python-coded statistical toolbox for methods described in the Reference
 # Reference:        Statistical Methods in Water Resources (SMIWR) by Helsel, Hirsch, 2002
+# Online Report:    http://pubs.usgs.gov/twri/twri4a3/
 # Code Assimilator: KSedmera
 # Last Update:      1/2015
 #------------------------------------------------------------------------------------------
@@ -128,10 +129,10 @@ def ListBoxSelectNRun(idlist, PlotMethod, tit, ExtraCommand='None'):
     (method), e.g. PlotMethod(idq) you want the ListBox to run.
     * PlotMethod must be a method that knows where to find the data and idlist
     to be used, for example to plot points / lines in a new figure.
-    * ExtraCommand='pylab.show()', which is optional, for example, allows you to
-    follow a plotting method with a figure-closing command, when you want it to
-    only plot a single line in a figure (rather than multiple lines in a single
-    figure by using PlotMethod without this ExtraCommand). """
+    * ExtraCommand='pylab.show(block=False)', which is optional, for example,
+    allows you to follow a plotting method with a figure-closing command, when
+    you want it to only plot a single line in a figure (rather than multiple
+    lines in a single figure by using PlotMethod without this ExtraCommand). """
     print("Use the new Tk window to select an ID to "+tit+".\nClose all Tk windows to exit this routine.")
     master = Tk.Tk()
     master.title(tit+' ID Selector')
@@ -181,6 +182,25 @@ def LoadTB(TBn):
     global TB
     try:    TB = pandas.read_csv(fn)
     except: print("Error:", sys.exc_info()[1]); return None
+
+def PlotVars(vars,varlbls,ylbl,lbl,hold=False):
+    """PlotVars(vars,varlbls,ylbl,lbl)
+    Plots 'vars' variables in one plot with axis labels, 'varlbls' & 'ylbl', and title, 'lbl'.
+      vars:       A list of lists, e.g. [xvar, yvar1, yvar2,...yvarn]
+      varlbls:    A list of 2 strings, e.g. ['xvar', 'yvar1', 'yvar2',...'yvarn']
+      ylbl:       A primary y-axis label, e.g. 'Streamflow (cfs)'
+      lbl:        A plot title string, e.g. 'yvar Moving Averages' """
+    fig = pylab.figure(); fig.patch.set_facecolor('white')
+    fig.canvas.set_window_title(lbl)
+    for var in range(1,len(vars)):
+        pylab.plot(vars[0], vars[var], label=varlbls[var])
+    ax = pylab.gca()
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    pylab.grid(b=True, which='major', color='k', linestyle=':')
+    pylab.grid(b=True, which='minor', color='g', linestyle=':')
+    pylab.xlabel(varlbls[0]); pylab.ylabel(ylbl)
+    if not(hold):   pylab.show(block=False)
 
 def Lookupx(TBn,f1,f2,x,xt):
     """Lookupx(TBn,f1,f2,x,xt)
@@ -274,8 +294,7 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min):
       mvwindow:   number of days for centered moving average window, default=7
       byYear:     extract yearly averages? default=True
       aggregator: numpy aggregation function, default=np.min
-    Returns two new "dataV" variables.
-    """
+    Returns two new "dataV" variables. """
     # Refs:
     # http://stackoverflow.com/questions/19324453/add-missing-dates-to-pandas-dataframe
     # http://stackoverflow.com/questions/15771472/pandas-rolling-mean-by-time-interval
@@ -292,9 +311,16 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min):
         byYear = df.groupby('Year')
         dataV[vnm1] = dict(list(byYear)).keys()
         dataV[vnm2] = byYear[vnm2].aggregate(aggregator).values.tolist()
+        cntnan = lambda grp: np.count_nonzero(~np.isnan(grp))
+        vnm3c = byYear[vnm2].aggregate(cntnan).values.tolist()
+        PlotVars([dataV[vnm1], dataV[vnm2]], [vnm1,vnm2], vnm2, vnm2,True)
+        PlotVars([dataV[vnm1], vnm3c], [vnm1, vnm3], vnm3, vnm3)
         if raw_input('Do you want to save detailed MovingAverage data to a csv file? (y/[n])')=='y':
-            cntnan = lambda grp: np.count_nonzero(~np.isnan(grp))
-            vnm3c = byYear[vnm2].aggregate(cntnan).values.tolist()
+            if min(vnm3c) < 365 and raw_input('Since you have some years with < 365 values, do you want to remove them? (y/[n])')=='y':
+                keep = tuple(i for i,v in enumerate(vnm3c) if v > 364)
+                dataV[vnm1] = [dataV[vnm1][i] for i in keep]
+                dataV[vnm2] = [dataV[vnm2][i] for i in keep]
+                vnm3c = [vnm3c[i] for i in keep]
             SaveOutputCSV([dataV[vnm1],dataV[vnm2],vnm3c], [vnm1,vnm2,vnm3], '{}-MovAvg'.format(datacol))
     else:
         vnm1 = '_'.join([datacol, 'Year'])
@@ -353,19 +379,36 @@ def SM_SamplePIs(col, pitype='p', conf=0.95, sides=2):
     for line in [('PI type', 'Sample-n', 'Lower {}% PI'.format(int(conf*100)), 'Upper {}% PI'.format(int(conf*100))), out]:
         print('{0: ^16}{1: ^12}{2: ^16}{3: ^16}'.format(*line))
 
-def SM_PercentileCIs(col, percentile, conf=0.95, sides=2):
-    """SM_SampleCIs(col, citype="mean", conf=0.95); H&H 3.3 & 3.4
-        returns either the mean or median
-        with upper and lower confidence intervals.
-        col:   a list/tuple of data, e.g. from Col2list
-        citype: "mean" or "median"
-        conf:   confidence level desired"""
+def SM_PercentileCIs(col,percentile,conf=0.95,sides=2,nonpar=True):
+    """SM_PercentileCIs(col,percentile,conf=0.95,sides=2,np=True)
+    Refs: -2002, H&H 3.3 & 3.4
+          -2006, Ames D.P "Estimating 7Q10 Confidence Limits from Data: A Bootstrap Approach", J. Water Resour. Plann. Manage., 132:204-208.
+    Returns either the mean or median with upper and lower confidence intervals.
+        col:        a list/tuple of data, e.g. from Col2list
+        percentile: percentile desired
+        conf:       confidence level desired
+        np:         True = non-parametric (H&H); False = Log-Pearson Type III (Ames). """
+    #
     n = len(col)
-    rl, ru = int(stats.binom.ppf((1.-conf)/sides, n, percentile)), int(stats.binom.ppf((1.+conf)/sides, n, percentile))-1
-    from scipy.interpolate import interp1d
-    y_interp = interp1d([float(i) for i in range(n)], sorted(col))
-    out = n, '{0}% = {1}'.format(percentile*100., y_interp(percentile*(n+1)-1)), sorted(col)[rl], sorted(col)[ru]
-    print('')
+    if nonpar:
+        rl, ru = int(stats.binom.ppf((1.-conf)/sides, n, percentile)), int(stats.binom.ppf((1.+conf)/sides, n, percentile))-1
+        from scipy.interpolate import interp1d
+        y_interp = interp1d([float(i) for i in range(n)], sorted(col))
+        out = n, '{0}% = {1}'.format(percentile*100., round(y_interp(percentile*(n+1)-1),5)), round(sorted(col)[rl],5), round(sorted(col)[ru],5)
+    else:
+        from random import randint
+        logcol = scipy.log(col)
+        def getstat(redat):
+            skew, loc, scale = stats.pearson3.fit(redat)
+            beta = (2./skew)**2
+            lam = np.sqrt(beta)/scale
+            eps = loc - (beta/lam)
+            return eps+(beta/lam)*(1.-1./(9.*beta)+stats.norm.ppf(percentile)*np.sqrt(1./(9.*beta)))**3
+        def getresample(logcol):
+            return [logcol[randint(0,n-1)] for i in range(n)]
+        theta = sorted([np.exp(getstat(getresample(logcol))) for i in range(1000)])
+        out = n, '{0}% = {1}'.format(percentile*100., round(np.exp(getstat(logcol)),5)), round(theta[int(1000*(1.-conf)/sides)],5), round(theta[int(1000*(1.+conf)/sides)],5)
+    print("\nNon-parametric CI's:" if nonpar else "\nLog-Pearson Type III CI's:")
     for line in [('Sample-n', 'Percentile', 'Lower {}% CI'.format(int(conf*100)), 'Upper {}% CI'.format(int(conf*100))), out]:
         print('{0: ^12}{1: ^16}{2: ^16}{3: ^16}'.format(*line))
 
@@ -463,8 +506,8 @@ def SM_SignedRank(c1,c2):
         print('alpha[W+ <= '+str(Ws)+'] =', alpha)
     return Ws, alpha
 
-def SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show()'):
-    """SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show()')
+def SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show(block=False)'):
+    """SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show(block=False)')
     Returns list of slope, intercept, r_value, p_value, std_err. """
     if lstats==None:   lstats = stats.linregress(x,y)
     fitl = np.poly1d(lstats[0:2])
@@ -533,7 +576,7 @@ def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
     SM_SLRplot(xd, yd, xl, yl, lstats=lstats, plot='None')
     pylab.fill_between(x, lcb, ucb, alpha=0.3, facecolor='gray')
     print('Confidence intervals: ', str(conf*100)+'%')
-    pylab.show()
+    pylab.show(block=False)
     #return lcb, ucb, x, y
 
 def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
@@ -584,7 +627,7 @@ def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
     pylab.xlabel('x'); pylab.ylabel('y')
-    pylab.show()
+    pylab.show(block=False)
     tls = stats.pearsonr(slope_*x+intercept_, y)
     return [slope_, intercept_]+list(tls)
 
@@ -639,14 +682,14 @@ def SM_QuantilePlot(cols=[], cnames=[], same=False):
             print('PPCC_norms:\n', ',\t'.join(cnames)+'\n', ',\t'.join([str(round(val[-1][-1],4)) for val in ps]))
         except:
             print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
-        pylab.show()
+        pylab.show(block=False)
     else:       # Plot seperate QQ plots for all columns in cols.
         rs = []
         for i,cols in enumerate(cols):
             ps = QuantPlotID(cnames[i])
             rs.append(round(ps[-1],4))
         print('R_norms:\n'+',\t'.join(cnames)+'\n'+',\t'.join([str(k) for k in rs]))
-        pylab.show()
+        pylab.show(block=False)
 
 def SM_PlotQQ(c1,c2,c1l,c2l):
     """ SM_PlotQQ(c1,c2,c1l,c2l) plots data columns, c1 vs. c2 after ordering
@@ -668,7 +711,7 @@ def SM_PlotQQ(c1,c2,c1l,c2l):
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
     pylab.xlabel('Sorted '+c1l); pylab.ylabel('Sorted '+c2l)
-    pylab.show()
+    pylab.show(block=False)
 
 def SM_BoxPlot(cols,xlbls,ylbl,ttl, idf=-1):
     """" SM_BoxPlot(cols,xlbls,ylbls,ttl,idf=-1) plots a box plot of cols with
@@ -692,10 +735,10 @@ def SM_BoxPlot(cols,xlbls,ylbl,ttl, idf=-1):
         pylab.grid(b=True, which='minor', color='g', linestyle=':')
         xtN = pylab.setp(ax, xticklabels=xlbls); pylab.setp(xtN, rotation=15)
         pylab.ylabel(ylbl)
-        pylab.show()
+        pylab.show(block=False)
     else:               # Calls ListBox function to plot IDs in the idf field.
         idlist = sorted(UniqueIDs2List(idf))
-        ListBoxSelectNRun(idlist, BoxPlotID, 'BoxPlot', ExtraCommand='pylab.show()')
+        ListBoxSelectNRun(idlist, BoxPlotID, 'BoxPlot', ExtraCommand='pylab.show(block=False)')
 
 def SM_HodgesLehmannDiff(c1,c2):
     import itertools
@@ -718,7 +761,7 @@ def SM_HodgesLehmannDiff(c1,c2):
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
     pylab.xlabel('dif(c1,c2)'); pylab.ylabel('p')
     pylab.legend(['diff(cn,cm)','H-L Median'],'best')
-    pylab.show()
+    pylab.show(block=False)
     return m
 
 def SM_MannKindall_test(x, alpha = 0.5):
@@ -833,7 +876,7 @@ def SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x'):
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
     pylab.ylabel('Exceedance Frequency (%)'); pylab.xlabel(vnm)
-    pylab.show()
+    pylab.show(block=False)
     return sdata, exceed
 
 def SM_RalphPlot(dates, flows, flowmax, vnm='x'):
@@ -862,7 +905,7 @@ def SM_RalphPlot(dates, flows, flowmax, vnm='x'):
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
     pylab.xlabel('Year'); pylab.ylabel('Total # > {0} cfs'.format(flowmax))
-    pylab.show()
+    pylab.show(block=False)
 
 if __name__ == '__main__':
     SMmethods = sorted([v for v in globals().keys() if (v.startswith(('SM','Add')))])
