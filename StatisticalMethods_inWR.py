@@ -1,9 +1,13 @@
 #------------------------------------------------------------------------------------------
-# Purpose:          Python-coded statistical toolbox for methods described in the Reference
+# Purpose:          Python-2.7.x toolbox based on methods in Reference below.
 # Reference:        Statistical Methods in Water Resources (SMIWR) by Helsel, Hirsch, 2002
 # Online Report:    http://pubs.usgs.gov/twri/twri4a3/
 # Code Assimilator: KSedmera
 # Last Update:      1/2015
+# To begin:         Run once to select a file and open the method selection dialogue.
+#                   The methods and data will perservere in memory if you run this in
+#                   an IDE/session (e.g. PyScripter, iPython).
+#                   All input/output data saved in "data"/"dataV" DataFrame/dict.
 #------------------------------------------------------------------------------------------
 from __future__ import print_function
 import os, sys, time, csv, fileinput, Tkinter as Tk, tkFileDialog
@@ -85,13 +89,19 @@ def SelectFile(req = 'Please select a {} file:', ft='csv'):
         return [fname] + list(os.path.split(fname))
     except: print("Error: {0}".format(sys.exc_info()[1])); time.sleep(5);  sys.exit()
 
-def Col2list(c,fil=[]):
-    """ Usage: Col2list(c,fil)
-    c   => column name of the data to export, in quotes, e.g. "Variable1"
-    fil => a value-filtering list, e.g. ["Variable2", "> 2.5"]
+def Var2list(c,filt=[]):
+    """ Usage: Var2list(c,filt)
+    c    => column name of the data to export, in quotes, e.g. "Variable1"
+    filt => a value-filtering list, e.g. ["Variable2", "> 2.5"]
     Returns a list() of data from column c"""
-    if fil: exec 'out = data[data[fil[0]]'+fil[1]+'][c].values.tolist()'; return out
-    else:   return data[:][c].values.tolist()
+    dn, dVn = data.columns.tolist(), dataV.keys()
+    if filt:    exec 'out = data[data[filt[0]]'+filt[1]+'][c].values.tolist()'; return out
+    elif isinstance(c, list):   return c
+    elif c in dn:   return data[:][c].values.tolist()
+    elif c in dVn:  return dataV[c]
+    else:
+        print("\nSorry. '{}' wasn't found.".format(c))
+        return []
 
 def outfile(fnmt,lbl,ext='csv'):
     """outfile(fnmt, lbl, ext = 'csv')
@@ -207,11 +217,12 @@ def Lookupx(TBn,f1,f2,x,xt):
         http://stackoverflow.com/questions/8916302/selecting-across-multiple-columns-with-python-pandas
         http://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.UnivariateSpline.html """
     try:
+        from scipy.interpolate import UnivariateSpline
         if TBn == 4:
             t ='TB['+' & '.join(["(TB['%s']==%s)" % (i,j) for i,j in [('n',f1),('m',f2)]])+']'
             exec 'ca='+t; exec "cx=np.array(ca[['"+xt+"']].values).T[0]"; exec "cp=np.array(ca[['p']].values).T[0]"
             cxp= np.column_stack((cx,cp));  cxps = cxp[np.lexsort((cxp[:,0],cxp[:,0]))]
-            spl = scipy.interpolate.UnivariateSpline(cxps[:,0].astype(int), cxps[:,1], s=1)
+            spl = UnivariateSpline(cxps[:,0].astype(int), cxps[:,1], s=1)
             if x >= min(cxps[:,0]) and x <= max(cxps[:,0]): px = round(spl(x),3)
             else:   px = round(spl(x),4)
             return px
@@ -220,7 +231,7 @@ def Lookupx(TBn,f1,f2,x,xt):
             t ='TB['+' & '.join(["(TB['%s']==%s)" % (i,j) for i,j in [('rej',f1),('n',f2)]])+']'
             exec 'cws=np.array('+t+')[0][2:6]'
             cwa= np.column_stack((cws,alphas)); cwas = cwa[np.lexsort((cwa[:,0],cwa[:,0]))]
-            spl = scipy.interpolate.UnivariateSpline(cwas[:,0].astype(int), cwas[:,1], s=1)
+            spl = UnivariateSpline(cwas[:,0].astype(int), cwas[:,1], s=1)
             if x >= min(cwas[:,0]) and x <= max(cwas[:,0]): px = round(spl(x),3)
             elif spl(x) < 0:    px = 0
             else:   px = round(spl(x),4)
@@ -287,13 +298,13 @@ def AddCalculatedVar(Col2bMasked,ColAggregator='',aggregator='np.max'):
     print('\nSuccessfully added the "{0}" and "{1}" variables to the "dataV" library.'.format(vnm1, vnm2))
     return dataV
 
-def SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min):
-    """SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min)
-      datescol:   column name of values in your "data" DataFrame
-      datacol:    column name of dates in your "data" DataFrame
-      mvwindow:   number of days for centered moving average window, default=7
-      byYear:     extract yearly averages? default=True
-      aggregator: numpy aggregation function, default=np.min
+def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=np.min):
+    """SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=np.min)
+      datescol:     column name of values in your "data" DataFrame
+      datacol:      column name of dates in your "data" DataFrame
+      mvwindow:     number of days for centered moving average window, default=7
+      groupbytime:  extract time averages? default='year'
+      aggregator:   numpy aggregation function, default=np.min
     Returns two new "dataV" variables. """
     # Refs:
     # http://stackoverflow.com/questions/19324453/add-missing-dates-to-pandas-dataframe
@@ -303,41 +314,39 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,byYear=True,aggregator=np.min):
     idx = pandas.date_range(min(tempSeries.index), max(tempSeries.index))
     tempSeries = tempSeries.reindex(idx, fill_value=np.NaN)
     MASeries = pandas.rolling_mean(tempSeries, mvwindow, min_periods=mvwindow, center=True)
-    if byYear:
-        vnm1 = '_'.join([datacol, 'Year'])
-        vnm2 = '_'.join([datacol, '{0}DayYearly{1}'.format(mvwindow, aggregator.func_name[1:].title())])
-        vnm3 = '_'.join([datacol, '{0}DayYearly{1}Count'.format(mvwindow, aggregator.func_name[1:].title())])
-        df = pandas.DataFrame({vnm2: MASeries, 'Year': pandas.Series([i.year for i in MASeries.index], index=MASeries.index)})
-        byYear = df.groupby('Year')
-        dataV[vnm1] = dict(list(byYear)).keys()
-        dataV[vnm2] = byYear[vnm2].aggregate(aggregator).values.tolist()
-        cntnan = lambda grp: np.count_nonzero(~np.isnan(grp))
-        vnm3c = byYear[vnm2].aggregate(cntnan).values.tolist()
+    if groupbytime:
+        vnm1 = '_'.join([datacol, groupbytime.title()])
+        vnm2 = '_'.join([datacol, '{0}Day{1}ly{2}'.format(mvwindow, groupbytime.title(), aggregator.func_name[1:].title())])
+        vnm3 = '_'.join([datacol, '{0}Day{1}ly{2}CountNaN'.format(mvwindow, groupbytime.title(), aggregator.func_name[1:].title())])
+        df = pandas.DataFrame({vnm2: MASeries, groupbytime.title(): pandas.Series([getattr(i, groupbytime) for i in MASeries.index], index=MASeries.index)})
+        bytime = df.groupby(groupbytime.title())
+        dataV[vnm1] = dict(list(bytime)).keys()
+        dataV[vnm2] = bytime[vnm2].aggregate(aggregator).values.tolist()
+        cntnan = lambda grp: np.count_nonzero(np.isnan(grp))
+        vnm3c = bytime[vnm2].aggregate(cntnan).values.tolist()
         PlotVars([dataV[vnm1], dataV[vnm2]], [vnm1,vnm2], vnm2, vnm2,True)
         PlotVars([dataV[vnm1], vnm3c], [vnm1, vnm3], vnm3, vnm3)
         if raw_input('Do you want to save detailed MovingAverage data to a csv file? (y/[n])')=='y':
-            if min(vnm3c) < 365 and raw_input('Since you have some years with < 365 values, do you want to remove them? (y/[n])')=='y':
-                keep = tuple(i for i,v in enumerate(vnm3c) if v > 364)
+            if max(vnm3c) > 0 and raw_input('Since you have some {}s with missing values, do you want to exclude them in the outfile? (y/[n])'.format(groupbytime))=='y':
+                keep = tuple(i for i,v in enumerate(vnm3c) if v < 1)
                 dataV[vnm1] = [dataV[vnm1][i] for i in keep]
                 dataV[vnm2] = [dataV[vnm2][i] for i in keep]
                 vnm3c = [vnm3c[i] for i in keep]
             SaveOutputCSV([dataV[vnm1],dataV[vnm2],vnm3c], [vnm1,vnm2,vnm3], '{}-MovAvg'.format(datacol))
     else:
-        vnm1 = '_'.join([datacol, 'Year'])
         vnm2 = '_'.join([datacol, '{0}DayMvAvg'.format(mvwindow)])
-        dataV[vnm1] = [i for i in MASeries.index]
         dataV[vnm2] = MASeries.values.tolist()
-    print('\nSuccessfully added the "{0}" and "{1}" variables to the "dataV" library\nNote: there may be NaN values in the "{1}" variable.'.format(vnm1, vnm2))
+    print("\nSuccessfully added the '{0}' variable to the 'dataV' library\nNote: there may be NaN values in the '{0}' variable.".format(vnm2))
     return dataV
 
 def SM_SampleCIs(col, citype="mean", conf=0.95):
     """SM_SampleCIs(col, citype="mean", conf=0.95); H&H 3.3 & 3.4
         returns either the mean or median
         with upper and lower confidence intervals.
-        col:   a list/tuple of data, e.g. from Col2list
+        col:   a list/tuple of data, e.g. from Var2list
         citype: "mean" or "median"
         conf:   confidence level desired"""
-    a = 1.0*np.array(col)
+    a = 1.0*np.array(Var2list(col))
     n = len(a)
     if citype == 'mean':
         """http://stackoverflow.com/questions/15033511/compute-a-confidence-interval-from-sample-data"""
@@ -363,18 +372,19 @@ def SM_SamplePIs(col, pitype='p', conf=0.95, sides=2):
         sides:  2 = both sides of pdf
         pitype: 'np' or 'p' for non-parametric or gaussian
         conf:    confidence level desired"""
-    n = len(col)
+    a = Var2list(col)
+    n = len(a)
     alpha = (1. - conf)/sides
     pitypep = {'p':'Parametric', 'np':'Nonparametric'}
     if pitype == 'np':
         from scipy.interpolate import interp1d
-        y_interp = interp1d([float(i) for i in range(n)], sorted(col))
+        y_interp = interp1d([float(i) for i in range(n)], sorted(a))
         zl, zu = alpha*n, (1. - alpha)*(n-1)
         out = pitypep[pitype], n, float(y_interp(zl)), float(y_interp(zu))
     else:   # pitype == 'p'
-        stdev2 = np.std(col)**2
+        stdev2 = np.std(a)**2
         h = stats.t.ppf(1. - alpha, n-1)*np.sqrt(stdev2+stdev2/n)
-        out = pitypep[pitype], n, np.mean(col)-h, np.mean(col)+h
+        out = pitypep[pitype], n, np.mean(a)-h, np.mean(a)+h
     print('')
     for line in [('PI type', 'Sample-n', 'Lower {}% PI'.format(int(conf*100)), 'Upper {}% PI'.format(int(conf*100))), out]:
         print('{0: ^16}{1: ^12}{2: ^16}{3: ^16}'.format(*line))
@@ -384,20 +394,21 @@ def SM_PercentileCIs(col,percentile,conf=0.95,sides=2,nonpar=True):
     Refs: -2002, H&H 3.3 & 3.4
           -2006, Ames D.P "Estimating 7Q10 Confidence Limits from Data: A Bootstrap Approach", J. Water Resour. Plann. Manage., 132:204-208.
     Returns either the mean or median with upper and lower confidence intervals.
-        col:        a list/tuple of data, e.g. from Col2list
+        col:        a list/tuple of data, e.g. from Var2list
         percentile: percentile desired
         conf:       confidence level desired
         np:         True = non-parametric (H&H); False = Log-Pearson Type III (Ames). """
     #
-    n = len(col)
+    a = Var2list(col)
+    n = len(a)
     if nonpar:
         rl, ru = int(stats.binom.ppf((1.-conf)/sides, n, percentile)), int(stats.binom.ppf((1.+conf)/sides, n, percentile))-1
         from scipy.interpolate import interp1d
-        y_interp = interp1d([float(i) for i in range(n)], sorted(col))
-        out = n, '{0}% = {1}'.format(percentile*100., round(y_interp(percentile*(n+1)-1),5)), round(sorted(col)[rl],5), round(sorted(col)[ru],5)
+        y_interp = interp1d([float(i) for i in range(n)], sorted(a))
+        out = n, '{0}% = {1}'.format(percentile*100., round(y_interp(percentile*(n+1)-1),5)), round(sorted(a)[rl],5), round(sorted(a)[ru],5)
     else:
         from random import randint
-        logcol = scipy.log(col)
+        logcol = scipy.log(a)
         def getstat(redat):
             skew, loc, scale = stats.pearson3.fit(redat)
             beta = (2./skew)**2
@@ -432,57 +443,76 @@ def SM_QSC(col):
 
 def SM_CorrCoeffs(c1,c2):
     """SM_CorrCoeffs(c1,c2)
-    Prints the correlation coefficients between two lists of measurements, c1 and c2 """
+    Prints the Pearson R, Spearman R, and Kendall Tau correlation coefficients
+    for the correlation between two lists of measurements, c1 and c2 """
     return [stats.pearsonr(c1,c2)[0], stats.spearmanr(c1,c2)[0], stats.kendalltau(c1,c2)[0]]
 
-def SM_RankSum(c1,c2,c1l,c2l,cont=False):
-    """SM_RankSum(c1,c2,c1l,c2l,cont=False)
+def SM_RankSum(c1l,c2l,cont=False):
+    """SM_RankSum(c1l,c2l,dataset,cont=False); H&H 5.1.2
+        c1l, c2l:   Labels for your two samples
+        The reported p-valued are for a one-sided hypothesis, the two-sided
+        p-value is obtained by multipling the returned p-value by 2.
         Cont = False -
-            Compute the Wilcoxon rank-sum statistic for two samples. The Wilcoxon rank-sum
-            test tests the null hypothesis that two sets of measurements are drawn from the
-            same distribution. The alternative hypothesis is that values in one sample are
-            more likely to be larger than the values in the other sample. This test should
-            be used to compare two samples from continuous distributions. It does not handle
-            ties between measurements in x and y. Returns: z-statistic, assumes large-sample
-            approximation and a normally distributed rank sum, and an adjusted 1-sided
-            p-value of the test (i.e. 1/2 scipy's 2-sided p-value).
-        Cont = True -
-            Computes the Mann-Whitney rank test on samples x and y. Use only when the number
-            of observation in each sample is > 20 and you have 2 independent samples of ranks.
-            Mann-Whitney U is significant if the u-obtained is LESS THAN or equal to the
-            critical value of U. This test corrects for ties and by default uses a continuity
-            correction. The reported p-value is for a one-sided hypothesis, to get the
-            two-sided p-value multiply the returned p-value by 2. Returns u, Mann-Whitney
-            statistics, and prob, a one-sided p-value assuming an asymptotic normal
-            distribution.
+            Computes the Wilcoxon rank-sum statistic for two samples.
+            Returns: z-statistic and an adjusted 1-sided p-value of
+            the test (i.e. 1/2 scipy's 2-sided p-value).
+            Ho: both measurements are drawn from the same distribution.
+            Ha: Sample1 values are likely > Sample2 values.
+            Assumes: large-sample approximation; normally-distributed rank sum;
+            both samples should be from continuous distributions since it does
+            not compensate for ties between measurements in x and y.
+        Cont = True - ; H&H 5.1.3
+            Computes the Mann-Whitney rank test on samples x and y.
+            Returns u, Mann-Whitney statistics, and prob, a one-sided p-value
+            assuming an asymptotic normal distribution.
+            Ho: both measurements are drawn from the same distribution.
+            Ha: Sample1 values are likely > Sample2 values.
+            Use only when n in both samples is > 20 and you have 2 independent
+            samples of ranks. This test corrects for ties and by default uses
+            a continuity correction.
         Cont = exact -
-            Computes the "exact version" of the rank sum test, as outlined in SMIWR chapters
-            4 and 5 for sample sizes less than 10 data points each. Returns 1-sided p value. """
+            Computes the "exact version" of the rank sum test, as outlined in
+            H&H 5.1.2 for sample sizes with 10 data points each or less.
+            Returns 1-sided and 2-sided p values. """
     try:
-        import itertools
-        if cont==False: return stats.ranksums(c1,c2)/2
-        elif cont==True:   return stats.mannwhitneyu(c1,c2,use_continuity=True)
+        c1, c2 = Var2list(c1l), Var2list(c2l)
+        if cont==False:
+            Pcn = stats.ranksums(c1,c2)
+            print('\nWilcoxon Rank Sum Test:\n\t\tFor Ho: Prob([{0} > {1}] != 0.5), p(Ho, 2-sided) = {2}\n'.format(c1l, c2l, Pcn[1]))
+        elif cont==True:
+            Pcn = stats.mannwhitneyu(c1,c2)
+            print('\nMann-Whitney Rank Sum Test:\n\t\tFor Ho: Prob([{0} > {1}] != 0.5), p(Ho, 1-sided) = {2}\n'.format(c1l, c2l, 2*Pcn[1]))
         else:
-            if max(len(c1),len(c2)) > 10:   print('Table B4 does not support the exact rank sum test for data sets with more than 10 points'); return None
-            elif len(c1) >= len(c2):  cm = c1; cn = c2; (cnl,cml)=(c2l,c1l)
-            else:   cm = c2;    cn = c1; (cnl,cml)=(c1l,c2l)
+            from itertools import combinations
+            if max(len(c1),len(c2)) > 10:
+                print('Table B4 does not support the exact rank sum test for data sets with more than 10 points')
+                return None
+            elif len(c1) >= len(c2):
+                cm, cn, (cnl,cml) = c1, c2, (c2l,c1l)
+            else:
+                cm, cn, (cnl,cml) = c2, c1, (c1l,c2l)
             LoadTB(4)
-            dup = {}; cnt = {}; rnk = {}; inc = 0
-            a1 = np.array(sorted(cn+cm)); a2 = list(range(1,len(cn+cm)+1))
+            dup, cnt, rnk, inc = {}, {}, {}, 0
+            a1, a2 = np.array(sorted(cn+cm)), list(range(1,len(cn+cm)+1))
             # Modify a2 ranks for duplicate a1 values => a3
-            for i in a1:    dup[i] = dup.get(i,0)+a2[inc]; cnt[i] = cnt.get(i,0)+1; inc += 1
-            for i in cnt: rnk[i] = float(dup[i])/cnt[i]
+            for i in a1:
+                dup[i], cnt[i] = dup.get(i,0)+a2[inc], cnt.get(i,0)+1
+                inc += 1
+            for i in cnt:
+                rnk[i] = float(dup[i])/cnt[i]
             a3 = [rnk[i] for i in a1]
             # Compute the joint-rank probabilities
-            b = [sum(i) for i in list(itertools.combinations(a3,2))]#; bu = np.unique(b)
+            b = [sum(i) for i in list(combinations(a3,2))]#; bu = np.unique(b)
             # Print distribution stats and plot
-            print('Exact form of the Rank-Sum test:')
-            print('Sample sizes:',', '.join([str(len(c1)), str(len(c2))]),'; \tRange of RankSums = ',' - '.join([str(b[0]),str(b[-1])]))
-            Wsn = sum([a3[np.nonzero(a1==i)[0][0]] for i in cn]); print('Exp[RankSum] in '+cnl+' =', Wsn,)
-            Wsm = sum([a3[np.nonzero(a1==i)[0][0]] for i in cm]); print('; \tExp[RankSum] in '+cml+' =', Wsm)
-            if Wsn < Wsm:   Pcn = Lookupx(4,len(cn),len(cm),Wsn,'xs'); tc = cnl+' < '+cml
-            else:   Pcn = Lookupx(4,len(cn),len(cm),Wsn,'x'); tc = cnl+' > '+cml
-            print('Prob ['+tc+'] =',1-Pcn,'; \t\tProb ['+cnl+' != '+cml+'] =', 1-2*Pcn)
+            print('\nExact form of the Rank-Sum test for datasets with less the 10 vales:')
+            print('Sample sizes:',', '.join([str(len(c1)), str(len(c2))]),'\nRange of RankSums = ',' - '.join([str(b[0]),str(b[-1])]))
+            Wsn, Wsm = sum([a3[np.nonzero(a1==i)[0][0]] for i in cn]), sum([a3[np.nonzero(a1==i)[0][0]] for i in cm])
+            larger = '{0} > {1}'.format(cnm, cnl) if Wsn >= Wsm else '{0} > {1}'.format(cml, cnl)
+            for line in (('', cnl, cml),('RankSum:', Wsn, Wsm)):
+                print('{0: ^12}{1: ^16}{2: ^16}'.format(*line))
+            template = 'Assuming Ho: Prob(['+larger+'] = 0.5)\nIf Ha(1-sided): Prob([a>b] > 0.5),  then p[Ho(1-sided)] = {0}\nIf Ha(2-sided): Prob([a>b] != 0.5), then p[Ho(2-sided)] = {1}'
+            Pcn = Lookupx(4,len(cn),len(cm),Wsn,'xs') if Wsn < Wsm else Lookupx(4,len(cn),len(cm),Wsn,'x')
+            print(template.format(Pcn, 2*Pcn))
             return Pcn
     except: print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
 
@@ -509,6 +539,9 @@ def SM_SignedRank(c1,c2):
 def SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show(block=False)'):
     """SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show(block=False)')
     Returns list of slope, intercept, r_value, p_value, std_err. """
+    if isinstance(x, str):
+        xl, yl = x, y
+        x,  y  = Var2list(x), Var2list(y)
     if lstats==None:   lstats = stats.linregress(x,y)
     fitl = np.poly1d(lstats[0:2])
     print('%s = %f * %s + %f, R^2 = %f, p = %f' % tuple([yl,lstats[0],xl]+list(lstats[1:4])))
@@ -524,18 +557,17 @@ def SM_SLRplot(x, y, xl='x', yl='y', lstats=None, plot='pylab.show(block=False)'
 
 def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
     """SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None)
-    http://astropython.blogspot.com/2011/12/calculating-and-plotting-prediction.html
-    Calculates the confidence band of the linear regression model at the
-    desired confidence level. The 2sigma confidence interval is 95% sure to
-    contain the best-fit regression line. This is not the same as saying it will
-    contain 95% of the data points.
     Arguments:
         - conf:     desired confidence level, by default 0.95 (2 sigma)
-        - xd,yd:    Numpy data arrays
+        - xd,yd:    data arrays/labels
         - a,b:      (optional) SLR constants, as in y=ax+b
         - x:        (optional) array with x values to calculate the confidence
                     band. If none is provided, will by default generate 100
                     points in the original x-range of the data.
+    Calculates the confidence band of the linear regression model at the
+    desired confidence level. The 2sigma confidence interval is 95% sure to
+    contain the best-fit regression line. This is not the same as saying it will
+    contain 95% of the data points.
     Calculates lcb,ucb,x,y: arrays holding the lower and upper confidence bands
                     corresponding to the [input] x array.
     Plots a shaded area containing the confidence band
@@ -543,7 +575,7 @@ def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
         1. http://en.wikipedia.org/wiki/Simple_linear_regression,
             see Section Confidence intervals
         2. http://www.weibull.com/DOEWeb/confidence_intervals_in_simple_linear_regression.htm
-    Rodrigo Nemmen v1 Dec. 2011 v2 Jun. 2012: corrected bug in computing dy """
+        3. http://astropython.blogspot.com/2011/12/calculating-and-plotting-prediction.html"""
     def scatterfit(x, y, a=None, b=None):
         """scatterfit(x, y, a=None, b=None)
         Compute the mean deviation of the data about the linear model given A,B
@@ -558,8 +590,11 @@ def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
         N=np.size(x)
         sd=1./(N-2.)* np.sum((y-a*x-b)**2); sd=np.sqrt(sd)
         return sd
-    xd = np.array(xd)
-    yd = np.array(yd)
+    if isinstance(xd, str):
+        xl, yl = xd, yd
+        xd, yd = np.array(Var2list(xd)), np.array(Var2list(yd))
+    else:
+        xd, yd = np.array(xd), np.array(yd)
     alpha = 1.-conf # significance
     n = xd.size # data sample size
     if x == None: x = np.linspace(xd.min(),xd.max(),100) # Predicted values (best-fit model)
@@ -579,8 +614,8 @@ def SM_SLRConfIntervals(xd, yd, xl='x', yl='y', lstats=None, conf=0.95, x=None):
     pylab.show(block=False)
     #return lcb, ucb, x, y
 
-def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
-    """SM_TheilLine(x,y, sample= "auto", n_samples = 1e7)
+def SM_TheilLine(x,y, xl='x',yl='y',sample="auto",n_samples=1e7):
+    """SM_TheilLine(x,y, xl='x',yl='y',sample="auto",n_samples=1e7)
     Adapted from: https://github.com/CamDavidsonPilon/Python-Numerics/blob/master/Estimators/theil_sen.py
     Computes the Theil-Sen estimator for 2d data.
     PARAMETERS:
@@ -596,8 +631,11 @@ def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
     slope, up to n_samples times.
     """
     import itertools
-    x = np.array(x)
-    y = np.array(y)
+    if isinstance(x, str):
+        xl, yl = x, y
+        x, y = np.array(Var2list(x)), np.array(Var2list(y))
+    else:
+        x, y = np.array(x), np.array(y)
     def slope(x_1, x_2, y_1, y_2):  return (1 - 2*(x_1>x_2))*((y_2 - y_1)/np.abs((x_2-x_1)))
     assert x.shape[0] == y.shape[0], "x and y must be the same shape."
     n = x.shape[0]
@@ -626,41 +664,65 @@ def SM_TheilLine(x,y, sample= "auto", n_samples = 1e7):
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
-    pylab.xlabel('x'); pylab.ylabel('y')
+    pylab.xlabel(xl); pylab.ylabel(yl)
     pylab.show(block=False)
     tls = stats.pearsonr(slope_*x+intercept_, y)
     return [slope_, intercept_]+list(tls)
 
-def SM_QuantilePlot(cols=[], cnames=[], same=False):
-    """SM_QuantilePlot(cols=[], cnames=[], same=False) creates a quantile plot(s)
+def SM_ProbabilityPlot(cols=[], cnames=[], same=False):
+    """SM_ProbabilityPlot(cols=[], cnames=[], same=False)
+    Creates quantile plots for cols. Ref: H&H 2.1.5
     cols =    list of data lists,
     cnames =  column names for cols,
     same =    True for same figure, False for seperate figures.
     Based on: http://stackoverflow.com/questions/13865596/quantile-quantile-plot-using-scipy
               http://docs.scipy.org/doc/scipy/reference/stats.html """
+    if isinstance(cols[0], str):
+        cnames = cols
+        cols = [Var2list(col) for col in cols]
     #data = np.random.normal(loc = 20, scale = 5, size=100)
     dn1 = raw_input("Which distribution: 0=norm, 1=lognorm, 2=expon, 3=powerlaw, 4=gumbel_r, 5=gumbel_l:")
     dst = ['norm','lognorm','expon','powerlaw','gumbel_r','gumbel_l']
     if not dn1:  dn2 = dst[0]   # default(none) = norm
     else:   dn2= dst[int(dn1)]  # otherwise = translate selection
-    def QuantPlotID():    # Plot method for a selected ID in the idf field.
+    def ProbPlotID(col,colnm):    # Plot method for a selected ID in the idf field.
         if isinstance(cols[0], list) and not isinstance(cols[0][0],float):  pass
         elif not isinstance(cols[0], list) and not isinstance(cols[0],float):  pass
         elif dn2 == 'lognorm':    # For lognormal, ignore values <= 0
-            if isinstance(cols[0], list):   ds = [scipy.log(i) for i in cols]; dn3='norm'
-            else:   ds = scipy.log(cols); dn3='norm'
+            ds = [scipy.log(i) if i>0 else np.NaN for i in col]; dn3='norm'
         else:   ds = cols; dn3=dn2
-        try:
+        fig = pylab.figure(); fig.patch.set_facecolor('white')
+        fig.canvas.set_window_title('Probability Plot for '+colnm)
+        osmr, ps, = stats.probplot(ds, dist=dn3, plot=pylab); ax = pylab.gca()
+        pylab.xlabel("'{}' Distribution Quantiles".format(dn2)); pylab.ylabel(colnm+' Units')
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
+        pylab.grid(b=True, which='major', color='k', linestyle=':')
+        pylab.grid(b=True, which='minor', color='g', linestyle=':')
+        pylab.show(block=False)
+        if raw_input('Want an exceedance plot of this data? (y/[n])') == 'y':
+            pexceed = stats.norm.sf(list(osmr[0]))
+            pexceeded = [1-i for i in pexceed]
+            yl = [ps[0]*min(osmr[0])+ps[1], ps[0]*max(osmr[0])+ps[1]]
             fig = pylab.figure(); fig.patch.set_facecolor('white')
-            fig.canvas.set_window_title('Probability Plot for '+', '.join(cnames))
-            osmr, ps, = stats.probplot(ds, dist=dn3, plot=pylab); ax = pylab.gca()
-            pylab.xlabel(dn2+" Quantiles"); pylab.ylabel("Sorted, "+dn2+" Measurements")
-            ax.xaxis.set_minor_locator(AutoMinorLocator())
-            ax.yaxis.set_minor_locator(AutoMinorLocator())
-            pylab.grid(b=True, which='major', color='k', linestyle=':')
-            pylab.grid(b=True, which='minor', color='g', linestyle=':')
-        except:
-            print("Error: the", dn2,"distribution does not fit the data.", sys.exc_info()[1]); time.sleep(5);  return None
+            fig.canvas.set_window_title('Exceedance Plot for '+', '.join(cnames))
+            ax1 = fig.add_subplot(111)
+            ax1.plot(osmr[0], osmr[1],'bo')
+            ax1.plot([min(osmr[0]), max(osmr[0])], yl,'r-')
+            ax1.text(0.8, 0.2*(max(osmr[1])-min(osmr[1])), "'{0}' Distribution\nR^2 = {1}".format(dn2, round(ps[-1],2)), size=10, ha='center')
+            pylab.xlabel(r"% Chance of being less than value above"); pylab.ylabel(colnm+' Units')
+            ax1.xaxis.set_minor_locator(AutoMinorLocator())
+            ax1.yaxis.set_minor_locator(AutoMinorLocator())
+            ax1.grid(b=True, which='major', color='k', linestyle=':')
+            ax1.grid(b=True, which='minor', color='g', linestyle=':')
+            ax2 = ax1.twiny()
+            labels = [str(round(stats.norm.sf(item)*100,2)) for item in ax1.get_xticks()]
+            ax1.set_xticklabels(labels)
+            labels2 = [str(round((1-stats.norm.sf(item))*100,2)) for item in ax1.get_xticks()]
+            ax2.set_xticklabels(labels2)
+            ax2.set_xlabel(r"% Chance of value below being exceeded")
+            pylab.show(block=False)
+        return ps
 
     if same:    # If 2 columns were specified for the same QQ plot.
         try:
@@ -673,27 +735,30 @@ def SM_QuantilePlot(cols=[], cnames=[], same=False):
                 else:   ds = cols[i]; dn3=dn2
                 ps[i] = stats.probplot(ds, dist=dn3, plot=pylab)
             ax = pylab.gca()
-            pylab.xlabel(dn2+" Quantiles"); pylab.ylabel("Sorted, "+dn2+" Measurements")
+            pylab.xlabel("'{}' Distribution Quantiles".format(dn3)); pylab.ylabel(cnames[0]+' Units')
             ax.xaxis.set_minor_locator(AutoMinorLocator())
             ax.yaxis.set_minor_locator(AutoMinorLocator())
             pylab.grid(b=True, which='major', color='k', linestyle=':')
             pylab.grid(b=True, which='minor', color='g', linestyle=':')
             pylab.legend(list(' '.join(cnames))+[' '], loc='best')
+            pylab.show(block=False)
             print('PPCC_norms:\n', ',\t'.join(cnames)+'\n', ',\t'.join([str(round(val[-1][-1],4)) for val in ps]))
         except:
             print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
-        pylab.show(block=False)
     else:       # Plot seperate QQ plots for all columns in cols.
         rs = []
         for i,cols in enumerate(cols):
-            ps = QuantPlotID(cnames[i])
-            rs.append(round(ps[-1],4))
-        print('R_norms:\n'+',\t'.join(cnames)+'\n'+',\t'.join([str(k) for k in rs]))
-        pylab.show(block=False)
+            ps = ProbPlotID(col,cnames[i])
+            rs.append(str(round(ps[-1],4)))
+        print("\n'{}' distribution R^2's:".format(dn2))
+        for tup in zip(cnames, rs): print(': '.join(tup))
 
-def SM_PlotQQ(c1,c2,c1l,c2l):
+def SM_PlotQQ(c1,c2,c1l='x',c2l='y'):
     """ SM_PlotQQ(c1,c2,c1l,c2l) plots data columns, c1 vs. c2 after ordering
     the values like quantiles. """
+    if isinstance(c1, str):
+        c1l, c2l = c1, c2
+        c1,  c2  = Var2list(c1), Var2list(c2)
     def linearfit(x,y):
         def linear_errors(m,x,y):
             return m*x - y
@@ -713,12 +778,15 @@ def SM_PlotQQ(c1,c2,c1l,c2l):
     pylab.xlabel('Sorted '+c1l); pylab.ylabel('Sorted '+c2l)
     pylab.show(block=False)
 
-def SM_BoxPlot(cols,xlbls,ylbl,ttl, idf=-1):
+def SM_BoxPlot(cols, xlbls=['y'],ylbl='y',ttl='',idf=-1):
     """" SM_BoxPlot(cols,xlbls,ylbls,ttl,idf=-1) plots a box plot of cols with
     an optional idf query of the ID field.
     http://matplotlib.org/examples/pylab_examples/boxplot_demo2.html """
+    if isinstance(cols[0], str):
+        xlbls = cols
+        cols = [Var2list(col) for col in cols]
     def BoxPlotID(idq):    # Plot method for a selected ID in the idf field.
-        ds = Col2list(cols[0],fil=[idf,"=='"+idq+"'"])
+        ds = Var2list(cols[0],filt=[idf,"=='"+idq+"'"])
         fig = pylab.figure(); fig.patch.set_facecolor('white')
         fig.canvas.set_window_title(idq+' '+ttl)
         pylab.boxplot(ds)
@@ -747,6 +815,9 @@ def SM_HodgesLehmannDiff(c1,c2):
     of the difference in the medians of non-normal populations x and y. A shift of
     size median delta makes the data appear devoid of any evidence of difference
     between x and y when viewed by the rank-sum test. """
+    if isinstance(c1, str):
+        xl, yl = c1, c2
+        c1, c2 = Var2list(c1), Var2list(c2)
     d = sorted([i-j for (i,j) in itertools.product(c1,c2)])
     m = scipy.median(d); z = stats.mstats.zscore(d); p = stats.norm.sf(z)
     print('Median delta ('+cnms[1]+' - '+cnms[2]+') =', m)
@@ -780,7 +851,11 @@ def SM_MannKindall_test(x, alpha = 0.5):
         >>> h,p = mk_test(x,0.05)  # meteo.dat comma delimited
     """
     from scipy.stats import norm
-    x = np.array(x)
+    if isinstance(x, str):
+        xl = x
+        x = np.array(Var2list(x))
+    else:
+        x = np.array(x)
     n = len(x)
     # calculate S
     s = 0
@@ -808,7 +883,8 @@ def SM_MannKindall_test(x, alpha = 0.5):
     #return h, p, s, z
 
 def SM_DurbinWatsonSerialCor(e):
-    """http://www.xyzhang.info/implement-durbin-watson-auto-correlation-test-in-python/
+    """SM_DurbinWatsonSerialCor(e)
+    Source: http://www.xyzhang.info/implement-durbin-watson-auto-correlation-test-in-python/
     The Durbin-Watson Serial Correlation value, d, varies from 0 to 4.
     d >> 2, is evidence of positive serial correlation
     d ~ 2 indicates very weak or no autocorrelation
@@ -826,21 +902,24 @@ def SM_DurbinWatsonSerialCor(e):
     print('Durbin-Watson: d=%f, (d-2)/2=%s' % (d, str(round((d-2.)*100.0/2.,1))+'%'))
 
 def SM_1WayAnova(*args):
-    """ All lists passed to this function are passed to Scipy's 1-way ANOVA. Returns (F-value, p-value).
+    """SM_1WayAnova(*args)
+    The list of lists passed to this function are passed to Scipy's 1-way ANOVA. Returns (F-value, p-value).
     Doc: http://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.f_oneway.html """
     return stats.f_oneway(*args)
 
-def SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x'):
-    """ SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x')
+def SM_QuantPlotter(col, postype='Cunnane', vnm = 'x'):
+    """ SM_QuantPlotter(col, postype='Cunnane', vnm = 'x')
+    col:        list/column-name of data to plot
+    postype:    Plotting position type (names explained below)
+    vnm:        Label for col
     Ref: H&H 2.1.3 "Quantile Plots"
-
-    http://python-scipy.sourcearchive.com/documentation/0.7.0-2/namespacescipy_1_1stats_1_1mstats__basic_ac1facaf57c97ee82d89cb9bd5e380b83.html
-    stats.mstats_basic.plotting_positions(data, alpha = 0.4, beta = 0.4)
+    Plottting position help (via scipy docs):
+    - http://python-scipy.sourcearchive.com/documentation/0.7.0-2/namespacescipy_1_1stats_1_1mstats__basic_ac1facaf57c97ee82d89cb9bd5e380b83.html
+    - scipy.stats.mstats_basic.plotting_positions(data, alpha = 0.4, beta = 0.4)
         Plotting positions are defined as (i-alpha)/(n-alpha-beta), where:
             - i is the rank order statistics
             - n is the number of unmasked values along the given axis
             - alpha and beta are two parameters.
-
         Typical values for alpha and beta are:
             - (0,1)    : *p(k) = k/n* : linear interpolation of cdf (R, type 4)
             - (.5,.5)  : *p(k) = (k-1/2.)/n* : piecewise linear function (R, type 5)
@@ -854,8 +933,10 @@ def SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x'):
               The resulting quantile estimates are approximately unbiased
               if x is normally distributed (R type 9)
             - (.4,.4)  : approximately quantile unbiased (Cunnane)
-            - (.35,.35): APL, used with PWM
-    """
+            - (.35,.35): APL, used with PWM """
+    if isinstance(col, str):
+        vnm = col
+        col = Var2list(col)
     sdata = sorted(col)
     alphabeta = {'Cunnane':  {'alpha':0.4, 'beta':0.4},
                  'R type 4': {'alpha':0., 'beta':1},
@@ -865,19 +946,19 @@ def SM_ExceedancePlot(col, exceedtype='Cunnane', vnm = 'x'):
                  'R type 8': {'alpha':1/3., 'beta':1/3.},
                  'R type 9': {'alpha':3/8., 'beta':3/8.},
                  'APL':      {'alpha':0.35, 'beta':0.35}}
-    exceed = [i*100. for i in stats.mstats_basic.plotting_positions(sdata, **alphabeta[exceedtype])]
-    if raw_input('Do you want to write the exceedance data to file? (y/n)')=='y':
-        SaveOutputCSV([sdata,exceed],[vnm,'P_exceedance'],'{}-exceedance'.format(vnm))
+    posits = [i*100. for i in stats.mstats_basic.plotting_positions(sdata, **alphabeta[postype])]
     fig = pylab.figure(); fig.patch.set_facecolor('white')
-    fig.canvas.set_window_title('Exceedance Plot for {0}; (Close to continue...)'.format(vnm))
-    pylab.plot(sdata, exceed); ax = pylab.gca()
+    fig.canvas.set_window_title('{0}Quantile Plot for {1}; (Close to continue...)'.format(postype, vnm))
+    pylab.plot(sdata, posits); ax = pylab.gca()
     ax.xaxis.set_minor_locator(AutoMinorLocator())
     ax.yaxis.set_minor_locator(AutoMinorLocator())
     pylab.grid(b=True, which='major', color='k', linestyle=':')
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
-    pylab.ylabel('Exceedance Frequency (%)'); pylab.xlabel(vnm)
+    pylab.ylabel('{} Quantile (%)'.format(postype)); pylab.xlabel(vnm)
     pylab.show(block=False)
-    return sdata, exceed
+    if raw_input('Do you want to write the exceedance data to file? (y/n)')=='y':
+        SaveOutputCSV([sdata,posits],[vnm,'Quantile'],'{}-exceedance'.format(vnm))
+    return sdata, posits
 
 def SM_RalphPlot(dates, flows, flowmax, vnm='x'):
     """ SM_RalphPlot(dates, flows, flowmax) plots the number of times list(flows)
@@ -915,7 +996,7 @@ if __name__ == '__main__':
     try:    data = pandas.read_csv(fname, na_values=[""," ",'None'])
     except: print("Error:", sys.exc_info()[1]); time.sleep(5);  sys.exit()
     cnms = sorted(data.columns.tolist())
-    print('\nYour original variable names include:\n{}'.format(', '.join(cnms)))
+    print('\nYour "data" variables include:\n{}'.format(', '.join(cnms)))
     if raw_input("Do you want to remove the null values first? (y/n)")=='y':
         data = data.dropna(axis=0)
         print('\nYou chose to drop null values.\n')
@@ -930,36 +1011,30 @@ if __name__ == '__main__':
     # Select tool(s) and input to perform analysis
     FuncSelectRun(SMmethods)
 
-    #print('\nExpected values for S2321500:')
-    #for line in [('Stat', 'Mean', 'Median'),('-'*12, '-'*16, '-'*16)]+zip(('ExpValue', 'lower95%CI', 'upper95%CI'), SM_SampleCIs(Col2list('S2321500')), SM_SampleCIs(Col2list('S2321500'), citype='median')):
-    #    print('{0: ^12}{1: ^16}{2: ^16}'.format(*line))
-    #print('\nPrediction intervals for S2321500:')
-    #for line in [('Stat', 'Parametric', 'Non-parametric'),('-'*16, '-'*16, '-'*16)]+zip(('lower95%PI', 'upper95%PI'), SM_SamplePIs(Col2list('S2321500')), SM_SamplePIs(Col2list('S2321500'), pitype='np')):
-    #    print('{0: ^16}{1: ^16}{2: ^16}'.format(*line))
     #SM_Bootstrap()
     #SM_QuantilePlot([1,2])
     #SM_AddDiffCol('FW-WS',0,2)
-    #print cnms[1]+'-vs-'+cnms[1]+': R, Rho, tau =','\t'.join([str(i) for i in SM_CorrCoeffs(Col2list(1),Col2list(2))])
-    #SM_SLRplot(Col2list(1),Col2list(2),cnms[1],cnms[2])
-    #SM_slrconf(scipy.log10(Col2list(1)),scipy.log10(Col2list(2)),cnms[1],cnms[2],0.975)
-    #print('Rank Sum: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(scipy.log(Col2list(1,[1,'>0'])),scipy.log(Col2list(2,[2,'>0'])),cnms[1],cnms[2])[1])
-    #print('Rank Sum: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(Col2list(1),Col2list(2),cnms[1],cnms[2])[1], '\n')
-    #print('Mann-Whitney: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(scipy.log10(Col2list(1,[1,'>0'])),scipy.log10(Col2list(2,[2,'>0'])),cnms[1],cnms[2],cont=True)[1])
-    #print('Mann-Whitney: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(Col2list(1),Col2list(2),cnms[1],cnms[2],cont=True)[1], '\n')
-    #SM_RankSum(Col2list(1)[0:10],Col2list(2)[0:10],cnms[1],cnms[2],'exact')
-    #SM_SignedRank(scipy.log10(Col2list(1)[0:10]),scipy.log10(Col2list(2)[0:10]))
+    #print cnms[1]+'-vs-'+cnms[1]+': R, Rho, tau =','\t'.join([str(i) for i in SM_CorrCoeffs(Var2list(1),Var2list(2))])
+    #SM_SLRplot(Var2list(1),Var2list(2),cnms[1],cnms[2])
+    #SM_slrconf(scipy.log10(Var2list(1)),scipy.log10(Var2list(2)),cnms[1],cnms[2],0.975)
+    #print('Rank Sum: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(scipy.log(Var2list(1,[1,'>0'])),scipy.log(Var2list(2,[2,'>0'])),cnms[1],cnms[2])[1])
+    #print('Rank Sum: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(Var2list(1),Var2list(2),cnms[1],cnms[2])[1], '\n')
+    #print('Mann-Whitney: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(scipy.log10(Var2list(1,[1,'>0'])),scipy.log10(Var2list(2,[2,'>0'])),cnms[1],cnms[2],cont=True)[1])
+    #print('Mann-Whitney: p['+cnms[1]+' < '+cnms[2]+'] =', 1-SM_RankSum(Var2list(1),Var2list(2),cnms[1],cnms[2],cont=True)[1], '\n')
+    #SM_RankSum(Var2list(1)[0:10],Var2list(2)[0:10],cnms[1],cnms[2],'exact')
+    #SM_SignedRank(scipy.log10(Var2list(1)[0:10]),scipy.log10(Var2list(2)[0:10]))
     #SM_QuantilePlot([1,2],same=True)
     #SM_QuantilePlot([1,2])
     #SM_QuantilePlot(cols=[4],idf=0)
-    #SM_PlotQQ(Col2list(1),Col2list(2),cnms[1],cnms[2])
-    #SM_BoxPlot([scipy.log10(Col2list(1)),scipy.log10(Col2list(2))],[cnms[1],cnms[2]],'Log (Flow), cfs','Flow BoxPlot')
+    #SM_PlotQQ(Var2list(1),Var2list(2),cnms[1],cnms[2])
+    #SM_BoxPlot([scipy.log10(Var2list(1)),scipy.log10(Var2list(2))],[cnms[1],cnms[2]],'Log (Flow), cfs','Flow BoxPlot')
     #SM_BoxPlot([4],[cnms[0]],'Well level, ft','BoxPlot', idf=0)
-    #SM_HodgesLehmannDiff(Col2list(1),Col2list(2))
-    #SM_SLRConfIntervals(Col2list(0),Col2list(1),xl=cnms[0],yl=cnms[1],conf=0.95)
-    #tl = SM_TheilLine(Col2list(0),Col2list(1))
+    #SM_HodgesLehmannDiff(Var2list(1),Var2list(2))
+    #SM_SLRConfIntervals(Var2list(0),Var2list(1),xl=cnms[0],yl=cnms[1],conf=0.95)
+    #tl = SM_TheilLine(Var2list(0),Var2list(1))
     #print('Theil line: m=%f, b=%f' % tuple(tl[:2]))
-    #SM_SLRConfIntervals(Col2list(0),Col2list(1),xl=cnms[0],yl=cnms[1],lstats=tl,conf=0.95)
-    #SM_MannKindall_test(Col2list(1),alpha=0.05)
-    #SM_DurbinWatsonSerialCor(Col2list(1))
-    #print('1-way ANOVA: F = %f, p = %f' % SM_1WayAnova(Col2list(0),Col2list(1)))
+    #SM_SLRConfIntervals(Var2list(0),Var2list(1),xl=cnms[0],yl=cnms[1],lstats=tl,conf=0.95)
+    #SM_MannKindall_test(Var2list(1),alpha=0.05)
+    #SM_DurbinWatsonSerialCor(Var2list(1))
+    #print('1-way ANOVA: F = %f, p = %f' % SM_1WayAnova(Var2list(0),Var2list(1)))
     #
