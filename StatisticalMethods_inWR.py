@@ -4,24 +4,20 @@
 # Online Report:    http://pubs.usgs.gov/twri/twri4a3/
 # Code Assimilator: KSedmera
 # Last Update:      1/2015
-# To begin:         Run once to select a file and open the method selection dialogue.
-#                   The methods and data will perservere in memory if you run this in
-#                   an IDE/session (e.g. PyScripter, iPython).
-#                   All input/output data saved in "data"/"dataV" DataFrame/dict.
+# To begin:         Run once to select a file and open the 'Function Selector' dialogue.
+#                   All methods and 'data'/'dataV' variables will persist in memory until
+#                   you close the current Python runtime window/session.
 #------------------------------------------------------------------------------------------
 from __future__ import print_function
-import os, sys, time, csv, fileinput, Tkinter as Tk, tkFileDialog
+import os, sys, time, fileinput, Tkinter as Tk, tkFileDialog
 try:    # Supplemental Python libraries required by the toolbox
     import numpy as np, pylab, scipy, scipy.stats as stats, pandas, datetime
     from matplotlib.ticker import AutoMinorLocator
     from dateutil.parser import parse as parsedate
-    from textwrap import wrap
     #import AnnoteFinder as AF
 except ImportError as exc:
-    import subprocess
     sys.stderr.write("Error: {}. Closing in 5 sec...\n".format(exc))
-    print("Note: These tools require Python 2.6.5 - 2.7.5 (e.g. 2.6.5 comes with ArcGIS 10.0),")
-    print("      AND several free science-related Python libraries. See which one your missing above.")
+    print("Note: These tools require Python 2.7+ AND several free libraries (e.g. which all come with Python(xy)).\nSee which one your missing above.")
     time.sleep(5);  sys.exit()
 
 ls = os.linesep
@@ -34,7 +30,7 @@ def FuncSelectRun(funclist):
     (method), e.g. funcq(argq) you want the ListBox to run.
     """
     print("Use the new Tk window to select an Function to execute.\nClose all Tk windows to exit this routine.")
-    print('\nYour variable names include:\n{}'.format(', '.join(cnms)))
+    print('\nYour "data" variable names include:\n{}'.format(', '.join(cnms)))
     master = Tk.Tk()
     master.title('Function Selector')
     F1 = Tk.Frame(master)
@@ -69,6 +65,7 @@ def FuncSelectRun(funclist):
             print("No function argments were specified. Try again.")
         else:
             runstr = """{0}({1})""".format(funcq, argq)
+            print("\nYou chose to run: {}".format(runstr))
             eval(runstr)
             print('\nYour "data" variables include:\n  {0}'.format(', '.join(cnms)))
             if dataV.keys():    print('Your "dataV" variables include:\n  {0}'.format(', '.join(dataV.keys())))
@@ -80,6 +77,7 @@ def FuncSelectRun(funclist):
     b2.pack(side=Tk.LEFT)
     F4.pack()
     Tk.mainloop()
+    print("\nThe 'Function Selector' dialogue closed: {}.\nNote that all methods and 'data'/'dataV' variables will\npersist in memory until you close this Python runtime.".format(time.strftime('%Y-%m-%d @ %H:%M')))
 
 def SelectFile(req = 'Please select a {} file:', ft='csv'):
     """ Customizable file-selection dialogue window, returns list() = [full path, root path, and filename]. """
@@ -94,9 +92,9 @@ def Var2list(c,filt=[]):
     c    => column name of the data to export, in quotes, e.g. "Variable1"
     filt => a value-filtering list, e.g. ["Variable2", "> 2.5"]
     Returns a list() of data from column c"""
-    dn, dVn = data.columns.tolist(), dataV.keys()
+    dn, dVn = cnms, dataV.keys()
     if filt:    exec 'out = data[data[filt[0]]'+filt[1]+'][c].values.tolist()'; return out
-    elif isinstance(c, list):   return c
+    elif (isinstance(c, list) or isinstance(c, np.ndarray)):    return c
     elif c in dn:   return data[:][c].values.tolist()
     elif c in dVn:  return dataV[c]
     else:
@@ -193,25 +191,6 @@ def LoadTB(TBn):
     try:    TB = pandas.read_csv(fn)
     except: print("Error:", sys.exc_info()[1]); return None
 
-def PlotVars(vars,varlbls,ylbl,lbl,hold=False):
-    """PlotVars(vars,varlbls,ylbl,lbl)
-    Plots 'vars' variables in one plot with axis labels, 'varlbls' & 'ylbl', and title, 'lbl'.
-      vars:       A list of lists, e.g. [xvar, yvar1, yvar2,...yvarn]
-      varlbls:    A list of 2 strings, e.g. ['xvar', 'yvar1', 'yvar2',...'yvarn']
-      ylbl:       A primary y-axis label, e.g. 'Streamflow (cfs)'
-      lbl:        A plot title string, e.g. 'yvar Moving Averages' """
-    fig = pylab.figure(); fig.patch.set_facecolor('white')
-    fig.canvas.set_window_title(lbl)
-    for var in range(1,len(vars)):
-        pylab.plot(vars[0], vars[var], label=varlbls[var])
-    ax = pylab.gca()
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
-    pylab.grid(b=True, which='major', color='k', linestyle=':')
-    pylab.grid(b=True, which='minor', color='g', linestyle=':')
-    pylab.xlabel(varlbls[0]); pylab.ylabel(ylbl)
-    if not(hold):   pylab.show(block=False)
-
 def Lookupx(TBn,f1,f2,x,xt):
     """Lookupx(TBn,f1,f2,x,xt)
         http://stackoverflow.com/questions/8916302/selecting-across-multiple-columns-with-python-pandas
@@ -248,7 +227,7 @@ def AddDateCol(fullDateCol='Date', dtcoltype='year'):
     - year, month, day, weekday, hour, minute, second."""
     cnm = '-'.join([fullDateCol,dtcoltype])
     exec "data['{0}'] = [i.{2} for i in data['{1}']]".format(cnm,fullDateCol,dtcoltype)
-    cnms.append(cnm)
+    cnms = data.columns.tolist()
     print('\nSuccessfully added "{}" to the "data" variables.'.format(cnm))
     return data, cnms
 
@@ -258,7 +237,7 @@ def AddDiffCol(cnm,c1,c2,operator='-'):
     is used to '+', '-', '*', '/' the data in columns c1 and c2
     (i.e. c1 <operator> c2)."""
     exec "data[cnm] = data[:][c1] {} data[:][c2]".format(operator)
-    cnms.append(cnm)
+    cnms = data.columns.tolist()
     print('\nSuccessfully added "{}" to the "data" variables.'.format(cnm))
     #ft = fname.split('.'); fnout = ft[0]+'_'+cnm+'.'+ft[1]
     #data.to_csv(fnout, cols=(cnms[c1],cnms[c2],cnm), index=False)
@@ -298,6 +277,57 @@ def AddCalculatedVar(Col2bMasked,ColAggregator='',aggregator='np.max'):
     print('\nSuccessfully added the "{0}" and "{1}" variables to the "dataV" library.'.format(vnm1, vnm2))
     return dataV
 
+def PlotVars(vars,varlbls,ylbl,lbl,hold=False):
+    """PlotVars(vars,varlbls,ylbl,lbl)
+    Plots 'vars' variables in one plot with axis labels, 'varlbls' & 'ylbl', and title, 'lbl'.
+      vars:       A list of lists, e.g. [xvar, yvar1, yvar2,...yvarn]
+      varlbls:    A list of 2 strings, e.g. ['xvar', 'yvar1', 'yvar2',...'yvarn']
+      ylbl:       A primary y-axis label, e.g. 'Streamflow (cfs)'
+      lbl:        A plot title string, e.g. 'yvar Moving Averages' """
+    fig = pylab.figure(); fig.patch.set_facecolor('white')
+    fig.canvas.set_window_title(lbl)
+    for var in range(1,len(vars)):
+        pylab.plot(vars[0], vars[var], label=varlbls[var])
+    ax = pylab.gca()
+    ax.xaxis.set_minor_locator(AutoMinorLocator())
+    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    pylab.grid(b=True, which='major', color='k', linestyle=':')
+    pylab.grid(b=True, which='minor', color='g', linestyle=':')
+    pylab.xlabel(varlbls[0]); pylab.ylabel(ylbl)
+    if not(hold):   pylab.show(block=False)
+
+def PlotPairs(df,cols,transp=1.):
+    """PlotPairs(df,cols,alpha=1.)
+    A matrix of scatterplots like R's "pairs" plotting function.
+      df:         DataFrame
+      cols:       a list of column names in 'df'
+      transp:     float, optional, amount of transparency applied
+      figsize:    (float,float), optional, a tuple (width, height) in inches
+      ax:         Matplotlib axis object, optional
+      grid:       bool, optional, setting this to True will show the grid
+      diagonal:   {'hist', 'kde'}, pick between 'kde' and 'hist' for either
+                  Kernel Density Estimation or Histogram plot in the diagonal
+      marker:     str, optional, Matplotlib marker type, default '.'
+      hist_kwds:  other plotting keyword arguments to be passed to hist function
+      density_kwds: other plotting keyword arguments to be passed to kernel
+                    density estimate plot
+      range_padding: float, optional, relative extension of axis range in x, y
+                     with respect to (x_max - x_min) or (y_max - y_min),
+                     default 0.05
+      kwds : other plotting keyword arguments to be passed to scatter function
+    Ref: http://stackoverflow.com/questions/2682144/matplotlib-analog-of-rs-pairs """
+    from pandas.tools.plotting import scatter_matrix
+    if isinstance(cols, list) and isinstance(df,pandas.DataFrame):
+        df2 = df[cols]
+        if max(df2[cols[0]].shape) > 200:   scatter_matrix(df2,alpha=transp,hist_kwds={'bins':50})
+        else:   scatter_matrix(df2,alpha=transp)
+        fig = pylab.gcf()
+        fig.canvas.set_window_title('Scatter-Matrix plot for: '+', '.join(cols))
+        pylab.tight_layout()
+        pylab.show(block=False)
+    else:
+        print("\nSorry. Your 'df' / 'cols' are not a DataFrame / list.")
+
 def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=np.min):
     """SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=np.min)
       datescol:     column name of values in your "data" DataFrame
@@ -326,8 +356,8 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=n
         vnm3c = bytime[vnm2].aggregate(cntnan).values.tolist()
         PlotVars([dataV[vnm1], dataV[vnm2]], [vnm1,vnm2], vnm2, vnm2,True)
         PlotVars([dataV[vnm1], vnm3c], [vnm1, vnm3], vnm3, vnm3)
-        if raw_input('Do you want to save detailed MovingAverage data to a csv file? (y/[n])')=='y':
-            if max(vnm3c) > 0 and raw_input('Since you have some {}s with missing values, do you want to exclude them in the outfile? (y/[n])'.format(groupbytime))=='y':
+        if raw_input('=> Do you want to save detailed MovingAverage data to a csv file (y/[n])? ')=='y':
+            if max(vnm3c) > 0 and raw_input('=> Since you have some {}s with missing values, do you want to exclude them in the outfile (y/[n])? '.format(groupbytime))=='y':
                 keep = tuple(i for i,v in enumerate(vnm3c) if v < 1)
                 dataV[vnm1] = [dataV[vnm1][i] for i in keep]
                 dataV[vnm2] = [dataV[vnm2][i] for i in keep]
@@ -445,6 +475,7 @@ def SM_CorrCoeffs(c1,c2):
     """SM_CorrCoeffs(c1,c2)
     Prints the Pearson R, Spearman R, and Kendall Tau correlation coefficients
     for the correlation between two lists of measurements, c1 and c2 """
+    if isinstance(c1, str): c1, c2 = Var2list(c1), Var2list(c2)
     return [stats.pearsonr(c1,c2)[0], stats.spearmanr(c1,c2)[0], stats.kendalltau(c1,c2)[0]]
 
 def SM_RankSum(c1l,c2l,cont=False):
@@ -507,7 +538,7 @@ def SM_RankSum(c1l,c2l,cont=False):
             print('\nExact form of the Rank-Sum test for datasets with less the 10 vales:')
             print('Sample sizes:',', '.join([str(len(c1)), str(len(c2))]),'\nRange of RankSums = ',' - '.join([str(b[0]),str(b[-1])]))
             Wsn, Wsm = sum([a3[np.nonzero(a1==i)[0][0]] for i in cn]), sum([a3[np.nonzero(a1==i)[0][0]] for i in cm])
-            larger = '{0} > {1}'.format(cnm, cnl) if Wsn >= Wsm else '{0} > {1}'.format(cml, cnl)
+            larger = '{0} > {1}'.format(cnl, cml) if Wsn >= Wsm else '{0} > {1}'.format(cml, cnl)
             for line in (('', cnl, cml),('RankSum:', Wsn, Wsm)):
                 print('{0: ^12}{1: ^16}{2: ^16}'.format(*line))
             template = 'Assuming Ho: Prob(['+larger+'] = 0.5)\nIf Ha(1-sided): Prob([a>b] > 0.5),  then p[Ho(1-sided)] = {0}\nIf Ha(2-sided): Prob([a>b] != 0.5), then p[Ho(2-sided)] = {1}'
@@ -681,7 +712,7 @@ def SM_ProbabilityPlot(cols=[], cnames=[], same=False):
         cnames = cols
         cols = [Var2list(col) for col in cols]
     #data = np.random.normal(loc = 20, scale = 5, size=100)
-    dn1 = raw_input("Which distribution: 0=norm, 1=lognorm, 2=expon, 3=powerlaw, 4=gumbel_r, 5=gumbel_l:")
+    dn1 = raw_input("=> Which distribution: 0=norm, 1=lognorm, 2=expon, 3=powerlaw, 4=gumbel_r, 5=gumbel_l? ")
     dst = ['norm','lognorm','expon','powerlaw','gumbel_r','gumbel_l']
     if not dn1:  dn2 = dst[0]   # default(none) = norm
     else:   dn2= dst[int(dn1)]  # otherwise = translate selection
@@ -700,9 +731,7 @@ def SM_ProbabilityPlot(cols=[], cnames=[], same=False):
         pylab.grid(b=True, which='major', color='k', linestyle=':')
         pylab.grid(b=True, which='minor', color='g', linestyle=':')
         pylab.show(block=False)
-        if raw_input('Want an exceedance plot of this data? (y/[n])') == 'y':
-            pexceed = stats.norm.sf(list(osmr[0]))
-            pexceeded = [1-i for i in pexceed]
+        if raw_input('=> Want an exceedance plot of this data (y/[n])? ') == 'y':
             yl = [ps[0]*min(osmr[0])+ps[1], ps[0]*max(osmr[0])+ps[1]]
             fig = pylab.figure(); fig.patch.set_facecolor('white')
             fig.canvas.set_window_title('Exceedance Plot for '+', '.join(cnames))
@@ -726,7 +755,6 @@ def SM_ProbabilityPlot(cols=[], cnames=[], same=False):
 
     if same:    # If 2 columns were specified for the same QQ plot.
         try:
-            p = []
             fig = pylab.figure(); fig.patch.set_facecolor('white')
             fig.canvas.set_window_title('Probability Plots for '+', '.join([cnms[i] for i in cols])+'; (Close to continue...)')
             for i in range(len(cols)):
@@ -767,7 +795,7 @@ def SM_PlotQQ(c1,c2,c1l='x',c2l='y'):
         return m[0]
     fig = pylab.figure(); fig.patch.set_facecolor('white')
     fig.canvas.set_window_title(c1l+' vs. '+c2l+' (close this window to continue)')
-    sc1 = sorted(c1); sc2 = sorted(c2); a=[]
+    sc1 = sorted(c1); sc2 = sorted(c2)
     fitr = linearfit(sc1,sc2); fitl = np.poly1d([fitr,0])
     pylab.plot(sc1,sc2,'bx',[0,max(sc1)],fitl([0,max(sc1)]),'g--', linewidth=2.0); ax = pylab.gca()
     pylab.figtext(0.7, 0.925, 'm: '+str(fitr[0]))
@@ -956,7 +984,7 @@ def SM_QuantPlotter(col, postype='Cunnane', vnm = 'x'):
     pylab.grid(b=True, which='minor', color='g', linestyle=':')
     pylab.ylabel('{} Quantile (%)'.format(postype)); pylab.xlabel(vnm)
     pylab.show(block=False)
-    if raw_input('Do you want to write the exceedance data to file? (y/n)')=='y':
+    if raw_input('=> Do you want to write the Quantile data to file (y/[n])? ')=='y':
         SaveOutputCSV([sdata,posits],[vnm,'Quantile'],'{}-exceedance'.format(vnm))
     return sdata, posits
 
@@ -989,24 +1017,24 @@ def SM_RalphPlot(dates, flows, flowmax, vnm='x'):
     pylab.show(block=False)
 
 if __name__ == '__main__':
-    SMmethods = sorted([v for v in globals().keys() if (v.startswith(('SM','Add')))])
-    print('Available methods include:\n {}.'.format(', '.join(SMmethods)))
+    SMmethods = sorted([v for v in globals().keys() if (v.startswith(('SM','Add','Plot')))])
+    print('### StatisticalMethods_inWR.py ###\nAvailable methods include:\n {}.'.format(', '.join(SMmethods)))
     fname, fpath, fnm1 = SelectFile('Please select a csv/txt file with your columns of measurements:')
     os.chdir(fpath)
     try:    data = pandas.read_csv(fname, na_values=[""," ",'None'])
     except: print("Error:", sys.exc_info()[1]); time.sleep(5);  sys.exit()
-    cnms = sorted(data.columns.tolist())
+    cnms = data.columns.tolist()
     print('\nYour "data" variables include:\n{}'.format(', '.join(cnms)))
-    if raw_input("Do you want to remove the null values first? (y/n)")=='y':
+    if raw_input("=> Do you want to remove the null values first (y/[n])? ")=='y':
         data = data.dropna(axis=0)
         print('\nYou chose to drop null values.\n')
-    dtcols = raw_input('If there are any dates/times columns in this file,\nplease enter which ones:\n(e.g. Enter "1,2" for the columns 1 and 2.)')
+    dtcols = raw_input('=> If there are any dates/times columns in this file,\n    please enter which ones:\n    (e.g. Enter "1,2" for columns 1 & 2, or blank). ')
     if dtcols:
         for col in (int(i)-1 for i in dtcols.split(',')):
             data[cnms[col]] = data[cnms[col]].apply(parsedate)
     # Describe the data
     dstats = data.describe()
-    print(fnm1+" descriptions:\n", dstats, '\n', 'QSC:',''.join(['%12s' % round(SM_QSC(col),6) for col in cnms if not isinstance(data[col][0],(str,datetime.date))])+'\n')
+    print(ls+fnm1+" descriptions:\n", dstats, '\n', 'QSC:',''.join(['%12s' % round(SM_QSC(col),6) for col in cnms if not isinstance(data[col][0],(str,datetime.date))])+'\n')
     dataV = {}
     # Select tool(s) and input to perform analysis
     FuncSelectRun(SMmethods)
