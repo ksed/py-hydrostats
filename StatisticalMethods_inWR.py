@@ -328,12 +328,12 @@ def PlotPairs(df,cols,transp=1.):
     else:
         print("\nSorry. Your 'df' / 'cols' are not a DataFrame / list.")
 
-def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=np.min):
+def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbyperiod='year',aggregator=np.min):
     """SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=np.min)
       datescol:     column name of values in your "data" DataFrame
       datacol:      column name of dates in your "data" DataFrame
       mvwindow:     number of days for centered moving average window, default=7
-      groupbytime:  extract time averages? default='year'
+      groupbyperiod: extract time averages? default='year'
       aggregator:   numpy aggregation function, default=np.min
     Returns two new "dataV" variables. """
     # Refs:
@@ -344,16 +344,17 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=n
     idx = pandas.date_range(min(tempSeries.index), max(tempSeries.index))
     tempSeries = tempSeries.reindex(idx, fill_value=np.NaN)
     MASeries = pandas.rolling_mean(tempSeries, mvwindow, min_periods=mvwindow, center=True)
-    if groupbytime:
-        vnm1 = '_'.join([datacol, groupbytime.title()])
-        vnm2 = '_'.join([datacol, '{0}Day{1}ly{2}'.format(mvwindow, groupbytime.title(), aggregator.func_name[1:].title())])
-        vnm3 = '_'.join([datacol, '{0}Day{1}ly{2}CountNaN'.format(mvwindow, groupbytime.title(), aggregator.func_name[1:].title())])
-        df = pandas.DataFrame({vnm2: MASeries, groupbytime.title(): pandas.Series([getattr(i, groupbytime) for i in MASeries.index], index=MASeries.index)})
-        bytime = df.groupby(groupbytime.title())
-        dataV[vnm1] = dict(list(bytime)).keys()
-        dataV[vnm2] = bytime[vnm2].aggregate(aggregator).values.tolist()
+    if groupbyperiod:
+        agt = aggregator.__name__[1:] if aggregator.__name__[0] == 'a' else aggregator.__name__
+        vnm1 = '_'.join([datacol, groupbyperiod.title()])
+        vnm2 = '_'.join([datacol, '{0}Day{1}ly{2}'.format(mvwindow, groupbyperiod.title(), agt.title())])
+        vnm3 = '_'.join([datacol, '{0}Day{1}ly{2}CountNaN'.format(mvwindow, groupbyperiod.title(), agt.title())])
+        df = pandas.DataFrame({vnm2: MASeries, groupbyperiod.title(): pandas.Series([getattr(i, groupbyperiod) for i in MASeries.index], index=MASeries.index)})
+        byperiod = df.groupby(groupbyperiod.title())
+        dataV[vnm1] = dict(list(byperiod)).keys()
+        dataV[vnm2] = byperiod[vnm2].aggregate(aggregator).values.tolist()
         cntnan = lambda grp: np.count_nonzero(np.isnan(grp))
-        vnm3c = bytime[vnm2].aggregate(cntnan).values.tolist()
+        vnm3c = byperiod[vnm2].aggregate(cntnan).values.tolist()
         PlotVars([dataV[vnm1], dataV[vnm2]], [vnm1,vnm2], vnm2, vnm2,True)
         PlotVars([dataV[vnm1], vnm3c], [vnm1, vnm3], vnm3, vnm3)
         if raw_input('=> Do you want to save detailed MovingAverage data to a csv file (y/[n])? ')=='y':
@@ -368,6 +369,25 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbytime='year',aggregator=n
         dataV[vnm2] = MASeries.values.tolist()
     print("\nSuccessfully added the '{0}' variable to the 'dataV' library\nNote: there may be NaN values in the '{0}' variable.".format(vnm2))
     return dataV
+
+def SM_BootstrapCIs(indata,sfunc=scipy.median,conf=0.95,sides=2,ns=1000,report=True):
+    """SM_BootstrapCIs(indata,sfunc=scipy.median,conf=0.95,sides=2,ns=1000,report=True)
+    Returns/prints the bootstrapped-CIs for the 'sfunc'. E.g. used in SM_PercentileCIs().
+      indata:     initial sample dataset, a list
+      sfunc:      statistic to estimate with bootstrap, default=scipy.median
+      conf:       desired CI level, default=0.95
+      sides:      # of sides for the 'conf', default=2
+      ns:         # of bootstrap estimates desired to estimate the range of
+                  'sfunc(indata)'. Usually ns >>> length(indata), default=1000
+      report:     boolean for printing the CI output, default=True """
+    from random import randint
+    n = len(indata)
+    def getresample(indata):
+        return [indata[randint(0,n-1)] for i in range(n)]
+    theta = sorted([sfunc(getresample(indata)) for i in range(ns)])
+    CIs = [theta[int(ns*(1.-conf)/sides)], theta[int(ns*(1.+conf)/sides)]]
+    if report:  print("\nBootstrapped {}% confidence intervals\nfor the {} = {}:\nRange: {} - {}".format(100*conf, sfunc.__name__.title(), round(sfunc(indata),5), round(CIs[0],5), round(CIs[1],5)))
+    return CIs
 
 def SM_SampleCIs(col, citype="mean", conf=0.95):
     """SM_SampleCIs(col, citype="mean", conf=0.95); H&H 3.3 & 3.4
@@ -427,41 +447,30 @@ def SM_PercentileCIs(col,percentile,conf=0.95,sides=2,nonpar=True):
         col:        a list/tuple of data, e.g. from Var2list
         percentile: percentile desired
         conf:       confidence level desired
-        np:         True = non-parametric (H&H); False = Log-Pearson Type III (Ames). """
-    #
+        npar:       True = non-parametric (H&H); False = Log-Pearson Type III (Ames).
+    Note with nonpar=True, the CIs are not sensitive to log-transformations of 'col'.
+    Also note the Log-Pearson Type III method assumes 'col' is not already in log units. """
     a = Var2list(col)
     n = len(a)
-    if nonpar:
+    if nonpar:  # H&H 3.3 & 3.4
         rl, ru = int(stats.binom.ppf((1.-conf)/sides, n, percentile)), int(stats.binom.ppf((1.+conf)/sides, n, percentile))-1
         from scipy.interpolate import interp1d
         y_interp = interp1d([float(i) for i in range(n)], sorted(a))
         out = n, '{0}% = {1}'.format(percentile*100., round(y_interp(percentile*(n+1)-1),5)), round(sorted(a)[rl],5), round(sorted(a)[ru],5)
-    else:
-        from random import randint
+    else:   # Log-Pearson Type III, e.g. for the 7Q10 stat of Ames
         logcol = scipy.log(a)
-        def getstat(redat):
+        percstat = stats.norm.ppf(percentile)
+        def getPT3percent(redat):
             skew, loc, scale = stats.pearson3.fit(redat)
             beta = (2./skew)**2
             lam = np.sqrt(beta)/scale
             eps = loc - (beta/lam)
-            return eps+(beta/lam)*(1.-1./(9.*beta)+stats.norm.ppf(percentile)*np.sqrt(1./(9.*beta)))**3
-        def getresample(logcol):
-            return [logcol[randint(0,n-1)] for i in range(n)]
-        theta = sorted([np.exp(getstat(getresample(logcol))) for i in range(1000)])
-        out = n, '{0}% = {1}'.format(percentile*100., round(np.exp(getstat(logcol)),5)), round(theta[int(1000*(1.-conf)/sides)],5), round(theta[int(1000*(1.+conf)/sides)],5)
+            return eps+(beta/lam)*(1.-1./(9.*beta)+percstat*np.sqrt(1./(9.*beta)))**3
+        CIs = scipy.exp(SM_BootstrapCIs(logcol,getPT3percent,conf,sides,1000,False))
+        out = n, '{0}% = {1}'.format(percentile*100., round(np.exp(getPT3percent(logcol)),5)), round(CIs[0],5), round(CIs[1],5)
     print("\nNon-parametric CI's:" if nonpar else "\nLog-Pearson Type III CI's:")
     for line in [('Sample-n', 'Percentile', 'Lower {}% CI'.format(int(conf*100)), 'Upper {}% CI'.format(int(conf*100))), out]:
         print('{0: ^12}{1: ^16}{2: ^16}{3: ^16}'.format(*line))
-
-def SM_Bootstrap(indata,a):
-    """SM_Bootstrap(indata,a), where a=alpha
-        Tutorial:   http://www.randalolson.com/2012/08/06/statistical-analysis-made-easy-in-python/
-        pyLibrary:  https://github.com/cgevans/scikits-bootstrap
-        Data:       https://github.com/rhiever/ipython-notebook-workshop/blob/master/parasite_data.csv """
-    try:    import scipy, scikits.bootstrap as bootstrap
-    except: print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
-    CIs = bootstrap.ci(data=indata, statfunction=scipy.median, alpha=a)
-    print("Bootstrapped "+str(100*(1-a))+"% confidence intervals\nLow:", CIs[0], "\tHigh:", CIs[1])
 
 def SM_QSC(col):
     """SM_QSC(col)
@@ -717,11 +726,11 @@ def SM_ProbabilityPlot(cols=[], cnames=[], same=False):
     if not dn1:  dn2 = dst[0]   # default(none) = norm
     else:   dn2= dst[int(dn1)]  # otherwise = translate selection
     def ProbPlotID(col,colnm):    # Plot method for a selected ID in the idf field.
-        if isinstance(cols[0], list) and not isinstance(cols[0][0],float):  pass
-        elif not isinstance(cols[0], list) and not isinstance(cols[0],float):  pass
+        if isinstance(col[0], list) and not isinstance(col[0][0],float):  pass
+        elif not isinstance(col[0], list) and not isinstance(col[0],float):  pass
         elif dn2 == 'lognorm':    # For lognormal, ignore values <= 0
             ds = [scipy.log(i) if i>0 else np.NaN for i in col]; dn3='norm'
-        else:   ds = cols; dn3=dn2
+        else:   ds = col; dn3=dn2
         fig = pylab.figure(); fig.patch.set_facecolor('white')
         fig.canvas.set_window_title('Probability Plot for '+colnm)
         osmr, ps, = stats.probplot(ds, dist=dn3, plot=pylab); ax = pylab.gca()
@@ -775,7 +784,7 @@ def SM_ProbabilityPlot(cols=[], cnames=[], same=False):
             print("Error:", sys.exc_info()[1]); time.sleep(5);  return None
     else:       # Plot seperate QQ plots for all columns in cols.
         rs = []
-        for i,cols in enumerate(cols):
+        for i,col in enumerate(cols):
             ps = ProbPlotID(col,cnames[i])
             rs.append(str(round(ps[-1],4)))
         print("\n'{}' distribution R^2's:".format(dn2))
