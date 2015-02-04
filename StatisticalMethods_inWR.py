@@ -77,7 +77,7 @@ def FuncSelectRun(funclist):
     b2.pack(side=Tk.LEFT)
     F4.pack()
     Tk.mainloop()
-    print("\nThe 'Function Selector' dialogue closed: {}.\nNote that all methods and 'data'/'dataV' variables will\npersist in memory until you close this Python runtime.".format(time.strftime('%Y-%m-%d @ %H:%M')))
+    print("\nThe 'Function Selector' dialog closed: {}.\nNote that all methods and 'data'/'dataV' variables will\npersist in memory until you close this Python runtime.".format(time.strftime('%Y-%m-%d @ %H:%M')))
 
 def SelectFile(req = 'Please select a {} file:', ft='csv'):
     """ Customizable file-selection dialogue window, returns list() = [full path, root path, and filename]. """
@@ -370,9 +370,27 @@ def SM_MovingAverage(datescol,datacol,mvwindow=7,groupbyperiod='year',aggregator
     print("\nSuccessfully added the '{0}' variable to the 'dataV' library\nNote: there may be NaN values in the '{0}' variable.".format(vnm2))
     return dataV
 
+def SM_BootstrapCIs3(indata,sfunc=scipy.median,conf=0.95,sides=2,ns=1000,report=True,meth='bca'):
+    """bootstrap.ci(data, statfunction=np.average, alpha=0.05, n_samples=10000, method='bca', output='lowhigh', epsilon=0.001, multi=None)
+    methods:
+    'pi': Percentile Interval (Efron 13.3)
+        The percentile interval method simply returns the 100*alphath bootstrap
+        sample's values for the statistic.
+    'bca': Bias-Corrected Accelerated Non-Parametric (Efron 14.3) (default)
+    'abc': Approximate Bootstrap Confidence (Efron 14.4, 22.6)
+        This method provides approximated bootstrap confidence intervals without
+        actually taking bootstrap samples.
+    Reference: Efron, An Introduction to the Bootstrap. Chapman & Hall 1993 """
+    import scikits.bootstrap as bootstrap
+    n = len(indata)
+    print('\tEstimating {} with {} bootstrap samples,\n\twhich may take a while to run...'.format(sfunc.__name__, ns))
+    CIs = bootstrap.ci(indata,statfunction=sfunc,alpha=1.-conf,n_samples=ns,method=meth)
+    if report:  print("\nBootstrapped {}% confidence intervals\nfor the {} = {}:\nRange: {} - {}".format(100*conf, sfunc.__name__.title(), round(sfunc(indata),5), round(CIs[0],5), round(CIs[1],5)))
+    return CIs
+
 def SM_BootstrapCIs(indata,sfunc=scipy.median,conf=0.95,sides=2,ns=1000,report=True):
     """SM_BootstrapCIs(indata,sfunc=scipy.median,conf=0.95,sides=2,ns=1000,report=True)
-    Returns/prints the bootstrapped-CIs for the 'sfunc'. E.g. used in SM_PercentileCIs().
+    Returns/prints the bootstrapped percentile method CIs for the 'sfunc'.
       indata:     initial sample dataset, a list
       sfunc:      statistic to estimate with bootstrap, default=scipy.median
       conf:       desired CI level, default=0.95
@@ -382,9 +400,9 @@ def SM_BootstrapCIs(indata,sfunc=scipy.median,conf=0.95,sides=2,ns=1000,report=T
       report:     boolean for printing the CI output, default=True """
     from random import randint
     n = len(indata)
-    def getresample(indata):
-        return [indata[randint(0,n-1)] for i in range(n)]
-    theta = sorted([sfunc(getresample(indata)) for i in range(ns)])
+    print('\tEstimating {} with {} bootstrap samples,\n\twhich may take a while to run...'.format(sfunc.__name__, ns))
+    resample = lambda n: [randint(0,n-1) for i in range(n)]
+    theta = sorted([sfunc(indata[resample(n)]) for i in range(ns)])
     CIs = [theta[int(ns*(1.-conf)/sides)], theta[int(ns*(1.+conf)/sides)]]
     if report:  print("\nBootstrapped {}% confidence intervals\nfor the {} = {}:\nRange: {} - {}".format(100*conf, sfunc.__name__.title(), round(sfunc(indata),5), round(CIs[0],5), round(CIs[1],5)))
     return CIs
@@ -443,13 +461,14 @@ def SM_PercentileCIs(col,percentile,conf=0.95,sides=2,nonpar=True):
     """SM_PercentileCIs(col,percentile,conf=0.95,sides=2,np=True)
     Refs: -2002, H&H 3.3 & 3.4
           -2006, Ames D.P "Estimating 7Q10 Confidence Limits from Data: A Bootstrap Approach", J. Water Resour. Plann. Manage., 132:204-208.
-    Returns either the mean or median with upper and lower confidence intervals.
+    Returns the upper and lower confidence intervals for the desired 'percentile' in 'col'.
         col:        a list/tuple of data, e.g. from Var2list
         percentile: percentile desired
         conf:       confidence level desired
         npar:       True = non-parametric (H&H); False = Log-Pearson Type III (Ames).
-    Note with nonpar=True, the CIs are not sensitive to log-transformations of 'col'.
-    Also note the Log-Pearson Type III method assumes 'col' is not already in log units. """
+    => nonpar=True: the CIs insensitive to log or other "additive" transformations of 'col'.
+    => nonpar=False: the natural log of 'col' is computed;
+                     # of bootstrap-samples = len('col')*100. """
     a = Var2list(col)
     n = len(a)
     if nonpar:  # H&H 3.3 & 3.4
@@ -460,14 +479,14 @@ def SM_PercentileCIs(col,percentile,conf=0.95,sides=2,nonpar=True):
     else:   # Log-Pearson Type III, e.g. for the 7Q10 stat of Ames
         logcol = scipy.log(a)
         percstat = stats.norm.ppf(percentile)
-        def getPT3percent(redat):
-            skew, loc, scale = stats.pearson3.fit(redat)
+        def getPearsonT3pcnt(redat):
+            skew, loc, scale = stats.skew(redat), scipy.mean(redat), scipy.std(redat)
             beta = (2./skew)**2
-            lam = np.sqrt(beta)/scale
-            eps = loc - (beta/lam)
-            return eps+(beta/lam)*(1.-1./(9.*beta)+percstat*np.sqrt(1./(9.*beta)))**3
-        CIs = scipy.exp(SM_BootstrapCIs(logcol,getPT3percent,conf,sides,1000,False))
-        out = n, '{0}% = {1}'.format(percentile*100., round(np.exp(getPT3percent(logcol)),5)), round(CIs[0],5), round(CIs[1],5)
+            lam = scipy.sqrt(beta)/scale
+            eps = loc-(beta/lam)
+            return eps+(beta/lam)*(1.-1./(9.*beta)+percstat*scipy.sqrt(1./(9.*beta)))**3
+        CIs = scipy.exp(SM_BootstrapCIs(logcol, getPearsonT3pcnt, conf, sides, n*100, False))
+        out = n, '{0}% = {1}'.format(percentile*100., round(np.exp(getPearsonT3pcnt(logcol)),5)), round(CIs[0],5), round(CIs[1],5)
     print("\nNon-parametric CI's:" if nonpar else "\nLog-Pearson Type III CI's:")
     for line in [('Sample-n', 'Percentile', 'Lower {}% CI'.format(int(conf*100)), 'Upper {}% CI'.format(int(conf*100))), out]:
         print('{0: ^12}{1: ^16}{2: ^16}{3: ^16}'.format(*line))
